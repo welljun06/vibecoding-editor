@@ -70,7 +70,7 @@ export function ChatFormSubmit({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90 disabled:opacity-40 disabled:shadow-none"
+      className="shrink-0 whitespace-nowrap rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90 disabled:opacity-40 disabled:shadow-none"
     >
       {children}
     </button>

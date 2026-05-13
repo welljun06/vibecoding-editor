@@ -82,8 +82,12 @@
   --duration-slow: 600ms;
   --duration-dramatic: 1200ms;
 
-  /* Typography */
-  --font-sans: "Roboto Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Typography — Inter handles Latin, PingFang SC falls in for CJK
+   *   glyphs (browsers pick per-codepoint from the stack, so Latin
+   *   resolves to Inter and Chinese to PingFang SC). system-ui keeps
+   *   the rendering native on non-Apple platforms that lack PingFang. */
+  --font-sans: "Inter", "PingFang SC", system-ui, -apple-system, "Segoe UI",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -191,8 +195,8 @@ html.theme-light {
   --fill-medium: rgba(16, 18, 24, 0.08);
   --fill-strong: rgba(16, 18, 24, 0.12);
   --fill-hover: rgba(16, 18, 24, 0.05);
-  --divider: rgba(16, 18, 24, 0.26);
-  --divider-soft: rgba(16, 18, 24, 0.18);
+  --divider: rgba(16, 18, 24, 0.14);
+  --divider-soft: rgba(16, 18, 24, 0.08);
   --code-divider: rgba(16, 18, 24, 0.13);
   --composer-bg: #ffffff;
   --bubble-me-bg: #f2f2f7;
@@ -846,6 +850,49 @@ input:focus-visible,
 }
 html.theme-light .tab-scroll:hover {
   scrollbar-color: rgba(16, 18, 24, 0.25) transparent;
+}
+
+/* ── Chat composer (contentEditable) ──
+ * The composer renders as a contentEditable div so @mention picks can
+ * be injected as inline <span class="mention-pill"> tags that read as
+ * real pills instead of plain "@name" text. Placeholder is drawn via
+ * a data-attribute so it vanishes as soon as the div has content. */
+.chat-editable {
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-editable:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(var(--color-ink-rgb, 16 18 24) / 0.35);
+  pointer-events: none;
+}
+html:not(.theme-light) .chat-editable:empty::before {
+  color: rgba(255, 255, 255, 0.35);
+}
+.chat-editable .mention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 5px;
+  margin: 0 1px;
+  border-radius: 6px;
+  /* Color matches the picker panel's item icon badge — indigo across
+   * all kinds. The icon differs per kind (via data-kind + inline SVG),
+   * but the accent color is unified. */
+  background: rgba(99, 102, 241, 0.10);
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 18px;
+  vertical-align: baseline;
+  /* contentEditable="false" on the span itself keeps the caret from
+   * landing inside the pill; cursor: default signals non-editable. */
+  cursor: default;
+  user-select: all;
+}
+.chat-editable .mention-pill svg {
+  flex-shrink: 0;
+  color: rgb(99 102 241);
 }
 html.theme-light .tab-scroll:hover::-webkit-scrollbar-thumb {
   background: rgba(16, 18, 24, 0.25);

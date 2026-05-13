@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { Fragment, useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ChatPreview from '@/modules/editor/components/preview/ChatPreview'
 import GlassIconButton from '@/modules/editor/components/layout/GlassIconButton'
@@ -14,7 +14,107 @@ import {
 import PublishFlowModal from '@/modules/editor/components/chat/PublishFlowModal'
 import { useThemeStore } from '@/shared/storage/theme'
 import MiniAppPreview from './MiniAppPreview'
+import AiPersonaChatPreview, { type TriggerSimulation } from './AiPersonaChatPreview'
+import MentionPicker, { type MentionItem } from './MentionPicker'
+import TriggerDetailView from './TriggerDetailView'
 import { ChatFormCard, ChatFormStep, ChatFormSubmit } from './ChatFormCard'
+import ResourceLibraryView, {
+  type TypeFilter as ResourceLibraryTypeFilter,
+} from './ResourceLibraryView'
+import PlatformPlaceholderView from './PlatformPlaceholderView'
+import ProposalGoalCard, { type ProposalGoalDraft } from './ProposalGoalCard'
+import ProposalDiagnosisCard from './ProposalDiagnosisCard'
+import ProposalAudienceDashboard from './ProposalAudienceDashboard'
+import ProposalPackCard, {
+  getPackProfile,
+  type ProposalPackId,
+} from './ProposalPackCard'
+import ProposalBriefCard, { PROPOSAL_PLAYS } from './ProposalBriefCard'
+import ProposalDashboardCard, {
+  PROPOSAL_FUNNEL,
+  PROPOSAL_MODULES,
+} from './ProposalDashboardCard'
+import ProposalReviewCard, {
+  PROPOSAL_REVIEW_ADVICE,
+  PROPOSAL_REVIEW_MODULES,
+  PROPOSAL_REVIEW_STATS,
+  PROPOSAL_REVIEW_TRAFFIC,
+} from './ProposalReviewCard'
+import UserEchoBubble, { truncate } from './UserEchoBubble'
+import Stream, { RevealAfter, Sequential } from './Stream'
+import {
+  ArtifactCard,
+  ArtifactCardGroup,
+  FileChip,
+  MentionChip,
+  ReportQualityRow,
+} from './ProposalChips'
+import MarkdownView from './MarkdownView'
+import {
+  RESOURCES,
+  type Capability,
+  type PrimaryCategory,
+  type Resource,
+} from './ResourceLibraryData'
+
+/** Each platform project has a `ProjectKind` (the concrete product /
+ *  case it represents) and an `OutputShape` (the abstract category that
+ *  determines what the right-side preview area looks like). New cases
+ *  only need a kind + a shape mapping — the dispatcher in the preview
+ *  area picks the right container automatically.
+ *
+ *  - `app`      — buildable product the user can interact with (mini-app,
+ *                 AI 分身, future: web/native). Right side renders a
+ *                 phone-style mockup with the actual product running.
+ *  - `artifact` — chat-driven document / config / dashboard production
+ *                 (proposals, reports, briefs, review docs). Right side
+ *                 renders the artefact panel (产出列表 + 下一步建议).
+ *  - `code`     — code-heavy refactor / library work. Right side renders
+ *                 the code editor + diff (already supported by existing
+ *                 code paths).
+ */
+type ProjectKind = 'mini-program' | 'ai-avatar' | 'ops-proposal'
+type OutputShape = 'app' | 'artifact' | 'code'
+
+const PROJECT_KINDS: Record<string, ProjectKind> = {
+  '每日打卡小程序': 'mini-program',
+  '第五人格塔罗小程序': 'mini-program',
+  '探店视频创作助手': 'mini-program',
+  '粉丝互动机器人': 'ai-avatar',
+  '陶白白 Sensei 分身': 'ai-avatar',
+  '沪上火锅·五一种草提案': 'ops-proposal',
+}
+
+const SHAPE_BY_KIND: Record<ProjectKind, OutputShape> = {
+  'mini-program': 'app',
+  'ai-avatar': 'app',
+  'ops-proposal': 'artifact',
+}
+
+/** Heuristic kind classifier — used when the home screen takes a free
+ *  prompt and we need to pick a shape before the project is named.
+ *  Keyword-based for the demo; real product would route through an AI
+ *  classifier with confidence scores + user override.
+ */
+function classifyProjectKind(prompt: string): ProjectKind {
+  const p = prompt.toLowerCase()
+  // App keywords beat artifact when both appear (build something is more
+  // specific than describe something).
+  if (
+    /(小程序|mini[-\s]?program|app|分身|avatar|网页|web)/i.test(p)
+  ) {
+    if (/(分身|avatar|persona|chat[-\s]?bot)/i.test(p)) return 'ai-avatar'
+    return 'mini-program'
+  }
+  // Artifact keywords cover most ops-proposal-like cases.
+  if (
+    /(方案|提案|报告|brief|看板|复盘|分析|策略|提案|种草|投放|brief)/i.test(p)
+  ) {
+    return 'ops-proposal'
+  }
+  // Fallback: most VibeCoding traffic builds an app.
+  return 'mini-program'
+}
 import {
   ArrowLeft,
   ArrowUp,
@@ -55,8 +155,8 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Undo2,
   Smartphone,
+  Zap,
   Terminal,
   ThumbsDown,
   ThumbsUp,
@@ -94,6 +194,7 @@ import {
   WandSparkles,
   AppWindow,
   BriefcaseBusiness,
+  Library,
 } from 'lucide-react'
 
 /* ─── Types ─── */
@@ -303,7 +404,7 @@ function RadioGroup({
             type="button"
             disabled={locked}
             onClick={() => onChange(o.value)}
-            className={`rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
+            className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
               active
                 ? 'bg-[var(--chat-form-option-bg)] font-medium text-[var(--color-ink)] shadow-[0_1px_2px_rgba(16,18,24,0.04)]'
                 : 'bg-[var(--chat-form-option-bg)] text-[var(--color-ink)]/55 hover:text-[var(--color-ink)]'
@@ -323,9 +424,537 @@ function RadioGroup({
 /* ─── File Tree ─── */
 type FileNode = { name: string; type: 'file' | 'dir'; children?: FileNode[] }
 
+/* ─── Trigger/action config (AI-avatar projects) ─── */
+type TriggerEventId =
+  | 'user-follow'
+  | 'user-comment'
+  | 'user-like'
+  | 'user-gift'
+  | 'user-post'
+
+interface TriggerConfig {
+  id: string
+  /** Editable display name — the user can rename from the detail tab. */
+  name: string
+  event: {
+    id: TriggerEventId
+    label: string
+    scene: string
+    supportedApps: string[]
+  }
+  action: {
+    executorApps: string[]
+    executionScene: string
+    description: string
+  }
+}
+
+/** Platform preset triggers. Chat keywords match into these; the detail
+ *  view reads event metadata from here. Extend by adding a new id to
+ *  TriggerEventId and a row below. */
+const TRIGGER_PRESETS: Record<
+  TriggerEventId,
+  { name: string; event: TriggerConfig['event'] }
+> = {
+  'user-follow': {
+    name: '用户关注后主动发消息',
+    event: {
+      id: 'user-follow',
+      label: '用户关注账号',
+      scene: 'AI分身账号个人页',
+      supportedApps: ['AI分身'],
+    },
+  },
+  'user-comment': {
+    name: '用户评论后回复',
+    event: {
+      id: 'user-comment',
+      label: '用户评论',
+      scene: 'AI分身作品评论区',
+      supportedApps: ['AI分身'],
+    },
+  },
+  'user-like': {
+    name: '用户点赞后致谢',
+    event: {
+      id: 'user-like',
+      label: '用户点赞',
+      scene: 'AI分身作品',
+      supportedApps: ['AI分身'],
+    },
+  },
+  'user-gift': {
+    name: '用户送礼后答谢',
+    event: {
+      id: 'user-gift',
+      label: '用户送礼物',
+      scene: 'AI分身直播间',
+      supportedApps: ['AI分身'],
+    },
+  },
+  'user-post': {
+    name: '用户投稿后推荐',
+    event: {
+      id: 'user-post',
+      label: '用户投稿',
+      scene: 'AI分身内容流',
+      supportedApps: ['AI分身'],
+    },
+  },
+}
+
+/** Default executor shared across triggers. The description gets filled
+ *  per-trigger from the quoted text in the user's chat message. */
+const DEFAULT_TRIGGER_ACTION: Omit<TriggerConfig['action'], 'description'> = {
+  executorApps: ['抖音官方账号小助手', 'AI分身'],
+  executionScene: 'AI聊天',
+}
+
 /** Pick a lucide icon per file extension so root-level files (e.g.
  *  app.tsx vs app.less vs app.json) are visually distinguishable without
  *  reading the name. Tint stays unified — only the glyph changes. */
+/** Lucide icon paths per mention kind. Kept as bare path strings so we
+ *  can build SVG elements via createElementNS without pulling React into
+ *  the DOM-manipulation path. Stroke-only icons drawn at 24×24 viewBox. */
+const MENTION_ICON_PATHS: Record<MentionKind, string[]> = {
+  skills: [
+    'M20 11.5V6a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L7.6 1.9A2 2 0 0 0 5.91 1H2v12a2 2 0 0 0 2 2h4',
+    'm14 16 2-2-2-2',
+    'm20 12 2 2-2 2',
+  ],
+  tools: [
+    'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
+  ],
+  files: [
+    'M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4',
+    'M14 2v4a2 2 0 0 0 2 2h4',
+    'm5 12-3 3 3 3',
+    'm9 18 3-3-3-3',
+  ],
+  triggers: [
+    'M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z',
+  ],
+  resources: [
+    'm16 6 4 14',
+    'M12 6v14',
+    'M8 8v12',
+    'M4 4v16',
+  ],
+}
+
+type MentionKind = 'skills' | 'tools' | 'files' | 'triggers' | 'resources'
+
+/** Create a small SVG glyph element for a mention kind. Inline SVG so
+ *  the pill renders without requiring React to mount a component. */
+function makeMentionIconSvg(kind: MentionKind): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('width', '10')
+  svg.setAttribute('height', '10')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  for (const d of MENTION_ICON_PATHS[kind]) {
+    const path = document.createElementNS(ns, 'path')
+    path.setAttribute('d', d)
+    svg.appendChild(path)
+  }
+  return svg
+}
+
+/** Build a non-editable pill element for the contentEditable composer.
+ *  The pill renders as an inline chip and is treated as a single atomic
+ *  unit by the editor — arrow-keys skip over it and backspace removes
+ *  the whole thing. Text content stays "@name" so `innerText` parsing
+ *  in sendChat still reads the mention as a normal token. The `data-
+ *  kind` attribute drives kind-specific color in CSS. */
+function buildMentionPill(
+  item: { id: string; name: string },
+  kind: MentionKind,
+): HTMLSpanElement {
+  const span = document.createElement('span')
+  span.className = 'mention-pill'
+  span.contentEditable = 'false'
+  span.setAttribute('data-mention-id', item.id)
+  span.setAttribute('data-kind', kind)
+  span.appendChild(makeMentionIconSvg(kind))
+  // Name only — the "@" that the user typed is consumed during the
+  // insert (deleted from the text node); the pill itself doesn't echo
+  // the "@" glyph back.
+  span.appendChild(document.createTextNode(item.name))
+  return span
+}
+
+/** Render the 商家目标卡 form draft into a markdown document. Stored as
+ *  a string and surfaced when the user opens the file in a tab. */
+function renderGoalMarkdown(d: {
+  brand: string
+  district: string
+  category: string
+  budget: string
+  period: string
+  audience: string
+  ask: string
+  constraints: string
+}): string {
+  return `# 商家目标卡
+
+> 由对话补充的需求经 AI 解析为可执行的种草目标。
+
+## 基本信息
+
+- **商家 / 品牌**：${d.brand}
+- **品类**：${d.category}
+- **城市 / 商圈**：${d.district}
+- **活动周期**：${d.period}
+- **市场预算**：${d.budget}
+- **目标人群**：${d.audience}
+
+## 商家核心诉求
+
+${d.ask}
+
+## 约束条件
+
+${d.constraints || '（暂无）'}
+
+## AI 目标解析
+
+当前商家的核心诉求是 **五一节点前潜客种草与搜索意向提升**，不适合直接以带货 GMV 作为第一目标。建议采用「头部品宣建立认知 + 本地垂类达人真实体验 + 中腰部场景覆盖 + 素人挑战扩散 + 可投广内容放大」的组合策略。
+
+需要重点监控：
+
+- A3 种草规模
+- 看后搜
+- 潜客覆盖
+- 内容自然贡献占比
+
+避免结果主要由商业投广堆出。
+
+## 待确认追问
+
+- 预算是否包含投广？当前预算记录为达人商业合作费用，若包含投广预算，会影响自然贡献占比判断。
+- 是否有必选达人？若商家指定头部达人，需锁定在达人包并重新估算预算和效果。
+`
+}
+
+/** Single source of truth for the proposal-flow artifact summaries.
+ *  The in-chat ArtifactCard pulls filename → summary from here. */
+const PROPOSAL_FILE_SUMMARY: Record<string, string> = {
+  '商家目标卡.md': '商家目标已结构化，包含核心诉求、约束和 AI 解析',
+  '人群诊断.md':
+    '人群与流量诊断结论：3 个风险 + 4 个目标阈值 + 同类商家 Benchmark',
+  '人群诊断看板': '可视化数据看板：KPI / 风险 / 人群 / 流量结构 / Benchmark',
+  '达人包.md': '已确认的达人包策略，含结构、指标预估和 AI 建议',
+  '玩法brief.md':
+    '4 套玩法 + Brief 模板：本地垂类 / 头部品宣 / 素人挑战 / 可投广候选',
+  '提案报告.md': '完整提案报告',
+  '执行看板.md': '执行看板配置（达人 / 机构 / 星图任务拆分）',
+  '复盘.md': '复盘文档（指标对比 + 经验沉淀）',
+}
+
+/** Render the 人群与流量诊断 step output into a markdown document. */
+function renderDiagnosisMarkdown(): string {
+  return `# 人群与流量诊断
+
+> 数据来源：@风神 同类火锅品牌过去 30 天指标 + @iDA 商家历史 A3 / 看后搜结构。
+
+## 风险诊断
+
+### 潜客覆盖缺口（高）
+
+近 30 天潜客内容触达低于同类商家均值 23%。建议本次提高本地垂类和可投广内容占比，扩大潜客覆盖。
+
+### 看后搜机会（高）
+
+同类火锅品牌中，**场景化探店**和**套餐价值内容**对看后搜的贡献最明显，需要在达人 brief 中强约束这两类元素。
+
+### 投广依赖风险（中）
+
+商家历史营销中商业投广流量占比偏高，A3 达成主要靠投广堆出。本次需要把内容自然贡献占比从 38% 提升到 50% 以上。
+
+## 人群覆盖结构
+
+- 老客覆盖：高
+- 新客覆盖：中
+- 搜索意向人群：中低
+- 潜客覆盖：低
+- A3 种草人群：低（需重点提升）
+
+## 流量结构
+
+- 商业投广流量：62%（偏高）
+- 内容自然流量：38%
+- 达人自然内容贡献：24%
+- 可投广内容贡献：18%
+
+## 建议目标阈值
+
+| 指标 | 阈值 |
+| --- | --- |
+| A3 种草人群 | ≥ 120 万 |
+| 看后搜规模 | ≥ 30 万 |
+| 内容自然贡献占比 | ≥ 50% |
+| 优质内容率 | ≥ 35% |
+
+## 同类商家策略 Benchmark
+
+| 策略类型 | 达人包结构 | A3 表现 | 看后搜 | 自然流量占比 | 平台建议 |
+| --- | --- | --- | --- | --- | --- |
+| 高头部品宣型 | 头部占比高 | 高 | 中 | 低 | 仅保留 1-2 位作为声量锚点 |
+| 本地垂类种草型 | 垂类达人占比高 | 中高 | 高 | 高 | **推荐** |
+
+## 诊断结论
+
+历史结果偏依赖商业投广。本次提案应优先提升「本地垂类真实体验内容」和「高质量可投广素材」占比，目标将内容自然贡献占比提升至 50% 以上。
+`
+}
+
+/** Render the chosen 达人包 into a markdown document. Captures the
+ *  pack id, projected metrics, talent bucket structure, and the AI's
+ *  recommendation note so the choice is auditable as a project artefact. */
+function renderPackMarkdown(pick: ProposalPackId): string {
+  const p = getPackProfile(pick)
+  const buckets = p.buckets
+    .map(
+      (b) =>
+        `| ${b.name} | ${b.count} 人 | ${b.budget} | ${b.note} |`,
+    )
+    .join('\n')
+  return `# 达人包策略 · ${p.id}
+
+> ${p.desc}
+
+## 关键指标预估
+
+| 预计 A3 种草人群 | 内容自然贡献 | 看后搜规模 | 预算 |
+| --- | --- | --- | --- |
+| ${p.metrics.a3} | ${p.metrics.natural} | ${p.metrics.afterSearch} | ${p.metrics.budget} |
+
+## 达人结构
+
+| 模块 | 数量 | 预算占比 | 核心作用 |
+| --- | --- | --- | --- |
+${buckets}
+
+## AI 建议
+
+${p.aiNote}
+
+## 下一步
+
+进入玩法 + Brief 编排（@mira 生成达人侧 brief；@aeolus 校准内容方向）。
+`
+}
+
+/** Step 5 — assemble the full proposal report from prior step output.
+ *  Mirrors what the original 提案报告生成器 surfaces: 商家目标理解 +
+ *  种草经营策略 + 关键指标预估 + 达人包结构表 + AI 修改建议 + 审批流。 */
+function renderReportMarkdown(
+  goal: ProposalGoalDraft,
+  pack: ProposalPackId,
+): string {
+  const p = getPackProfile(pack)
+  const buckets = p.buckets
+    .map(
+      (b) => `| ${b.name} | ${b.count} 人 | ${b.budget} | ${b.note} |`,
+    )
+    .join('\n')
+  return `# ${goal.brand}｜五一潜客种草方案
+
+> 方案版本 V2 ｜ ${pack} ｜ 预算 ${p.metrics.budget} ｜ 周期 ${goal.period}
+
+## 1. 商家目标理解
+
+本次目标不是短期达人带货，而是五一节点前提升潜客认知和搜索意向。建议用达人内容建立"朋友聚餐、性价比套餐、夜宵火锅"等消费场景，带动 A3 种草人群和看后搜增长。
+
+> 商家原话：${goal.ask}
+
+## 2. 种草经营策略
+
+采用"头部品宣达人建立声量 + 本地垂类达人提供真实体验 + 中腰部达人扩大场景覆盖 + 素人挑战营造参与氛围 + 可投广素材放大潜客"的组合策略。
+
+### 关键指标预估
+
+| 预计 A3 | 预计看后搜 | 内容自然贡献 | 预算 |
+| --- | --- | --- | --- |
+| ${p.metrics.a3} | ${p.metrics.afterSearch} | ${p.metrics.natural} | ${p.metrics.budget} |
+
+## 3. 达人包结构
+
+| 模块 | 数量 | 预算占比 | 核心作用 |
+| --- | --- | --- | --- |
+${buckets}
+
+## 4. 玩法 + Brief
+
+详情见 \`briefs/玩法brief.md\`，包含本地垂类、头部品宣、素人挑战、可投广候选 4 套模板。
+
+## 5. AI 修改建议
+
+建议在提案里补充"内容自然贡献占比"作为商家复盘口径，并解释为什么不建议过度增加头部达人预算。
+
+## 6. 审批流
+
+- 行业负责人：**已通过**
+- 财务预算确认：**待确认**
+- 星图合作校验：**进行中**
+
+## 7. 提案质量检查
+
+- 目标清晰度：92
+- 达人包完整度：88
+- 预算合理性：76（建议补充投广预算口径）
+- 自然贡献风险：中（需要 brief 严控可投广素材）
+`
+}
+
+/** Step 6 — render the 转执行看板 snapshot into a markdown document.
+ *  Captures the funnel + 5 status modules so the dashboard is auditable
+ *  as a project artefact. */
+function renderDashboardMarkdown(): string {
+  const funnel = PROPOSAL_FUNNEL.map(
+    (f) => `| ${f.label} | ${f.value} |`,
+  ).join('\n')
+  const modules = PROPOSAL_MODULES.map((m) => {
+    const items = m.items
+      .map((it) =>
+        it.alert
+          ? `- **${it.title}** —— ${it.meta}\n  > ⚠ ${it.alert}`
+          : `- **${it.title}** —— ${it.meta}`,
+      )
+      .join('\n')
+    return `### ${m.title}（${m.status}）\n\n${items}`
+  }).join('\n\n')
+  return `# 执行看板
+
+> 提案不止导出文档，而是一键拆成达人、机构、星图、达人中心和飞书任务。
+
+## 执行漏斗
+
+| 阶段 | 数量 |
+| --- | --- |
+${funnel}
+
+## 执行模块
+
+${modules}
+
+## 同步频率
+
+- 每日同步飞书日报到行业群
+- 每周一对照 \`reports/提案报告.md\` 校准节奏
+- 复盘节点（5/05 后）触发自动出 \`reports/复盘.md\`
+`
+}
+
+/** Step 7 — render the 复盘 doc. Final terminal artefact: actual data
+ *  vs target, traffic decomposition, module contribution table, and
+ *  next-iteration advice. */
+function renderReviewMarkdown(): string {
+  const stats = PROPOSAL_REVIEW_STATS.map(
+    (s) => `- **${s.label}**: ${s.value}（${s.note}）`,
+  ).join('\n')
+  const traffic = PROPOSAL_REVIEW_TRAFFIC.map(
+    (t) => `| ${t.label} | ${t.valueLabel} |`,
+  ).join('\n')
+  const headers = Object.keys(PROPOSAL_REVIEW_MODULES[0])
+  const modules = PROPOSAL_REVIEW_MODULES.map(
+    (row) => `| ${headers.map((h) => row[h]).join(' | ')} |`,
+  ).join('\n')
+  const advice = PROPOSAL_REVIEW_ADVICE.map(
+    (a) => `### ${a.title}\n\n${a.desc}`,
+  ).join('\n\n')
+  return `# 种草复盘
+
+> 复盘重点不是总量，而是种草质量和自然贡献。
+
+## 实际数据 vs 目标
+
+${stats}
+
+## 流量贡献拆解
+
+| 维度 | 实际值 |
+| --- | --- |
+${traffic}
+
+> AI 诊断：总 A3 和看后搜均达成，但 A3 仍较依赖投广；看后搜的自然贡献表现更好，主要来自本地垂类达人和中腰部真实体验内容。下次建议提高本地垂类占比，减少头部达人预算。
+
+## 达人包模块贡献
+
+| ${headers.join(' | ')} |
+| ${headers.map(() => '---').join(' | ')} |
+${modules}
+
+## 下次策略建议
+
+${advice}
+
+## 可复用资产沉淀
+
+- 优选达人包：18 人
+- 可投广内容池：9 条
+- 高质量机构：2 家
+- 模板归档：「餐饮节点潜客种草」可作为后续同类项目起点
+`
+}
+
+/** Render the 4 玩法 + Brief into a single markdown document. */
+function renderBriefMarkdown(): string {
+  return `# 玩法 + Brief 编排
+
+> 每个达人桶都对应一种玩法 + Brief 模板。统一标准后再下发，避免内容方向漂移。
+
+${PROPOSAL_PLAYS.map(
+  (p) => `## ${p.name}｜${p.tag}
+
+${p.scope}
+
+### 创作目标
+
+${p.goal}
+
+### 必须包含
+
+${p.mustHave.map((m) => `- ${m}`).join('\n')}
+
+### 质量要求
+
+${p.quality}
+`,
+).join('\n')}
+## 下发说明
+
+- 头部 / 本地垂类达人走 @mira 单独沟通，确认档期与脚本初稿后再下星图订单
+- 中腰部 / 素人挑战投稿走机构批量下发，机构内预筛后才能进入审核
+- 可投广候选标签由 @holmes 自动初评，命中规则才会进入投广素材池
+`
+}
+
+/** Flatten a project FileNode tree into the flat list the mention
+ *  picker consumes. Folders become `foo/` paths so `@src` and
+ *  `@src/pages/index.tsx` both end up unique. */
+function flattenFileTreeForMention(
+  nodes: FileNode[],
+  prefix = '',
+): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = []
+  for (const n of nodes) {
+    const path = prefix + n.name
+    if (n.type === 'file') {
+      out.push({ id: path, name: path })
+    } else if (n.children) {
+      out.push(...flattenFileTreeForMention(n.children, path + '/'))
+    }
+  }
+  return out
+}
+
 function getFileIcon(name: string): typeof File {
   const lower = name.toLowerCase()
   if (/\.(tsx|ts|jsx|js|mjs|cjs)$/.test(lower)) return FileCode2
@@ -917,7 +1546,7 @@ function PlatformHome({
  *  `FileTreeView` with the workspace's real `fileTree` state. Other projects
  *  are static collapsed stubs. */
 function PlatformSidebar({
-  fileTree,
+  projectTrees,
   expandedDirs,
   toggleDir,
   openFileInTab,
@@ -927,8 +1556,14 @@ function PlatformSidebar({
   setOpenProjects,
   onSwitchProject,
   onCollapseAll,
+  onOpenResourceLibrary,
+  onOpenSkills,
+  onOpenCreativeSquare,
+  activeNav,
 }: {
-  fileTree: FileNode[]
+  /** Per-project file trees. Projects missing from this map render the
+   *  "暂无文件" empty state when expanded. */
+  projectTrees: Record<string, FileNode[]>
   expandedDirs: Set<string>
   toggleDir: (path: string) => void
   openFileInTab: (filename: string) => void
@@ -942,10 +1577,17 @@ function PlatformSidebar({
   onSwitchProject: (name: string) => void
   /** Collapse every open folder + project down to the root level. */
   onCollapseAll: () => void
+  /** Open the dedicated 资源库 page on the right side. */
+  onOpenResourceLibrary: () => void
+  /** Open the Skills placeholder page. */
+  onOpenSkills: () => void
+  /** Open the 创意广场 placeholder page. */
+  onOpenCreativeSquare: () => void
+  /** Which top-level nav is currently active — drives the highlight. */
+  activeNav: 'Skills' | '资源库' | '创意广场' | null
 }) {
   const [spaceMenuPos, setSpaceMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [activeSpace, setActiveSpace] = useState('个人空间')
-  const [activeNav, setActiveNav] = useState<'Skills' | '资源库' | '创意广场' | null>(null)
   const spaceBtnRef = useRef<HTMLButtonElement>(null)
   const toggleProject = (name: string) =>
     setOpenProjects((prev) => {
@@ -954,15 +1596,15 @@ function PlatformSidebar({
       else next.add(name)
       return next
     })
-  /* Sidebar project list. The 2nd entry shares a stable name with the
-   * active right-side project so its file tree can hang off the sidebar;
-   * the others are empty-state stubs to suggest a populated workspace. */
-  const ACTIVE_PROJECT_NAME = '第五人格塔罗小程序'
+  /* Sidebar project list. Entries with a tree in `projectTrees` expand
+   * to a real FileTreeView; the rest fall back to an "暂无文件" stub. */
   const ALL_PROJECTS = [
     '每日打卡小程序',
-    ACTIVE_PROJECT_NAME,
+    '第五人格塔罗小程序',
+    '陶白白 Sensei 分身',
     '探店视频创作助手',
     '粉丝互动机器人',
+    '沪上火锅·五一种草提案',
   ] as const
 
   return (
@@ -1046,7 +1688,11 @@ function PlatformSidebar({
           return (
             <button
               key={label}
-              onClick={() => setActiveNav(label)}
+              onClick={() => {
+                if (label === '资源库') onOpenResourceLibrary()
+                else if (label === 'Skills') onOpenSkills()
+                else if (label === '创意广场') onOpenCreativeSquare()
+              }}
               className={`flex items-center gap-1.5 rounded-full px-2 py-1 text-[13px] font-semibold leading-5 text-[var(--color-ink)] transition-colors ${
                 active
                   ? 'bg-[rgba(83,96,143,0.12)]'
@@ -1080,13 +1726,12 @@ function PlatformSidebar({
         </div>
       </div>
 
-      {/* Project tree — the real FileTreeView hangs off ACTIVE_PROJECT_NAME;
-           the other projects are empty-state stubs (they expand to a muted
-           "暂无文件" placeholder, not a tree). */}
+      {/* Project tree — projects with an entry in `projectTrees` expand
+           to a FileTreeView; the rest render a muted "暂无文件" stub. */}
       <div className="thin-scroll flex-1 overflow-y-auto pb-2">
         {ALL_PROJECTS.map((name) => {
           const open = openProjects.has(name)
-          const hasRealTree = name === ACTIVE_PROJECT_NAME
+          const tree = projectTrees[name]
           return (
             <div key={name}>
               <button
@@ -1103,9 +1748,9 @@ function PlatformSidebar({
                 )}
                 <span className="truncate">{name}</span>
               </button>
-              {open && hasRealTree && (
+              {open && tree && (
                 <FileTreeView
-                  nodes={fileTree}
+                  nodes={tree}
                   expanded={expandedDirs}
                   onToggleDir={toggleDir}
                   onOpenFile={openFileInTab}
@@ -1114,7 +1759,7 @@ function PlatformSidebar({
                   railStartDepth={1}
                 />
               )}
-              {open && !hasRealTree && (
+              {open && !tree && (
                 <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
                   暂无文件
                 </div>
@@ -1177,25 +1822,101 @@ export default function VibeCodingPage() {
   const [tagsStep, setTagsStep] = useState<RecStep>('idle')
   const [tagsAddOpen, setTagsAddOpen] = useState(false)
   const [formSubmitted, setFormSubmitted] = useState(false)
+  /* Trigger/action configs wired up via chat for AI-avatar projects.
+   * Declared here (before the loading→ready useEffect below) so both the
+   * effect and the AI-persona file tree can read them. */
+  const [triggers, setTriggers] = useState<TriggerConfig[]>([])
+  const [triggerStep, setTriggerStep] = useState<RecStep>('idle')
+
+  /* ── 种草提案 flow state ──
+   * Drives the 沪上火锅 case. Step 1 collects 商家目标卡 via an inline
+   * ChatFormCard; on submit, the captured draft is rendered into a
+   * markdown file and appended to the project tree. Subsequent steps
+   * (人群诊断, 达人包, brief, 提案报告, 执行看板, 复盘) append further
+   * artefacts as the conversation advances. */
+  type ProposalStep =
+    | 'idle'
+    | 'collecting'
+    | 'goal-confirmed'
+    | 'audience-diagnosed'
+    | 'pack-ready'
+    | 'brief-ready'
+    | 'report-ready'
+    | 'dashboard-ready'
+    | 'review-ready'
+  // Mirror the URL signal here so the proposal step / seeded chat / open
+  // tabs all hydrate on first paint (avoids the home-flash-to-proposal
+  // transition). Note: keep this in sync with `wantsProposalProject`
+  // below where projectTitle is initialised.
+  const proposalDeepLink =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('project') === 'proposal'
+  const [proposalStep, setProposalStep] = useState<ProposalStep>(
+    proposalDeepLink ? 'collecting' : 'idle',
+  )
+  const [proposalGoal, setProposalGoal] = useState<ProposalGoalDraft | null>(null)
+  const [proposalPack, setProposalPack] = useState<ProposalPackId | null>(null)
+  /** Markdown content for files generated by the proposal flow, keyed by
+   *  filename (e.g. '商家目标卡.md'). The file tree carries the structure;
+   *  this map carries the body so the renderer can show real content when
+   *  the user opens the file in a tab. */
+  const [proposalDocs, setProposalDocs] = useState<Record<string, string>>({})
+  /** Cross-bubble streaming gates — when one stage's bubble has fully
+   *  streamed, the corresponding flag flips so the NEXT bubble in the
+   *  same transition can start streaming sequentially. Without these,
+   *  bubbles that mount together (e.g. Step 2 diagnosis + Step 3 pack
+   *  selector at audience-diagnosed) would stream in parallel. */
+  const [step2BubbleStreamed, setStep2BubbleStreamed] = useState(false)
+  const [step3ClosingBubbleStreamed, setStep3ClosingBubbleStreamed] =
+    useState(false)
+  const [pendingTrigger, setPendingTrigger] = useState<TriggerConfig | null>(null)
+  const [lastConfirmedTrigger, setLastConfirmedTrigger] = useState<TriggerConfig | null>(null)
+  const [editingTriggerNameId, setEditingTriggerNameId] = useState<string | null>(null)
+  /* Append-only log of simulated trigger firings. Renders inside the
+   * phone preview; the "模拟 {event}" chip that appends to this lives
+   * outside the phone (in the preview-tab chrome). */
+  const [triggerSimulations, setTriggerSimulations] = useState<TriggerSimulation[]>([])
   const [chatCleared, setChatCleared] = useState(false)
   const [chatDraft, setChatDraft] = useState('')
-  /* Composer auto-grow — resize textarea to fit content (capped so very
-   * long drafts still leave room for the message history above). */
-  const chatInputRef = useRef<HTMLTextAreaElement>(null)
-  useLayoutEffect(() => {
+  /* Composer is a contentEditable div so @mention picks render as
+   * inline pills. `chatInputRef` points at the div; `chatDraft` mirrors
+   * the div's plain-text content via its onInput. External setters
+   * (clear-on-send, programmatic fill) go through `setComposerText`
+   * so the DOM and state stay in lockstep. */
+  const chatInputRef = useRef<HTMLDivElement>(null)
+  const setComposerText = (next: string) => {
+    if (chatInputRef.current) chatInputRef.current.innerText = next
+    setChatDraft(next)
+  }
+  /* @mention picker — opens when the user types "@" in the composer.
+   * `anchor` positions the popover above the input; clearing it closes
+   * the picker. */
+  const [mentionAnchor, setMentionAnchor] = useState<
+    { left: number; top: number; width: number } | null
+  >(null)
+  const openMentionPicker = () => {
     const el = chatInputRef.current
     if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [chatDraft])
+    const rect = el.getBoundingClientRect()
+    setMentionAnchor({ left: rect.left, top: rect.top, width: rect.width })
+  }
   /* User-sent messages — appended to the bottom of the scroll area. The
    * static mock conversation stays above. Three trigger kinds:
    *   • 'publish' — message matched 发布/更新, publish flow kicked off
    *   • 'needs'   — matched 需求/新建/重新收集, needs-gathering form reset
    *   • 'none'    — plain message, just rendered as a user bubble
    */
-  type SentMessage = { text: string; trigger: 'none' | 'publish' | 'needs' }
-  const [sentMessages, setSentMessages] = useState<SentMessage[]>([])
+  type SentMessage = { text: string; trigger: 'none' | 'publish' | 'needs' | 'trigger' | 'proposal' }
+  const [sentMessages, setSentMessages] = useState<SentMessage[]>(() =>
+    proposalDeepLink
+      ? [
+          {
+            text: '帮我做沪上火锅品牌五一前的潜客种草提案，预算 50w，目标是 A3 种草和看后搜提升',
+            trigger: 'proposal',
+          },
+        ]
+      : [],
+  )
   /* Chat session list — the header's conversation-name button opens a
    * dropdown of these, and the + button creates a fresh empty session. */
   type ChatSession = { id: string; name: string }
@@ -1208,11 +1929,22 @@ export default function VibeCodingPage() {
   const [activeSessionId, setActiveSessionId] = useState('s-current')
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false)
   const sessionMenuRef = useRef<HTMLDivElement>(null)
-  /* Platform "home" / new-project landing view — shown by clicking the
-   * + 新建项目 button in the sidebar. Contains a hero title + a large
-   * prompt composer + suggestion pills. Submitting returns to the normal
-   * workspace with the prompt routed through sendChat. */
-  const [platformHomeOpen, setPlatformHomeOpen] = useState(false)
+  /* Platform "home" / new-project landing view — shown on first load
+   * (no project selected yet) and whenever the user clicks + 新建项目.
+   * Contains a hero title + a large prompt composer + suggestion pills.
+   * Submitting returns to the normal workspace with the prompt routed
+   * through sendChat. Closes when the user activates a project via
+   * sidebar click. */
+  // If a deep link points to a specific surface (resources / proposal),
+  // suppress the platform home on first paint so the right surface
+  // lands immediately.
+  const [platformHomeOpen, setPlatformHomeOpen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const p = new URLSearchParams(window.location.search)
+    if (p.get('page') === 'resources') return false
+    if (p.get('project') === 'proposal') return false
+    return true
+  })
   const [homeDraft, setHomeDraft] = useState('')
   /* 第五人格 needs-collection mock — only surfaces when the user sends a
    * message containing 第五人格/小程序. Default off so the chat starts in
@@ -1263,6 +1995,13 @@ export default function VibeCodingPage() {
     const t = setTimeout(() => setTagsStep('ready'), 1100)
     return () => clearTimeout(t)
   }, [tagsStep])
+  /** Trigger-config recognition — brief loading state ("AI 正在识别
+   *  触发器...") before surfacing the parsed card for confirmation. */
+  useEffect(() => {
+    if (triggerStep !== 'loading') return
+    const t = setTimeout(() => setTriggerStep('ready'), 650)
+    return () => clearTimeout(t)
+  }, [triggerStep])
   /* Publish flow now lives in `usePublishFlowStore` so the top-right CTA
    *  can choose between modal vs chat-embedded rendering. */
   const publishStep = usePublishFlowStore((s) => s.step)
@@ -1394,7 +2133,7 @@ export default function VibeCodingPage() {
   const resetChatState = () => {
     setChatCleared(true)
     setSentMessages([])
-    setChatDraft('')
+    setComposerText('')
     setScene('')
     setAppType('')
     setEnabledCapabilities(new Set())
@@ -1406,6 +2145,14 @@ export default function VibeCodingPage() {
     setNeedsFlowActive(false)
     setNeedsThinkingVisible(true)
     resetPublish()
+    // Trigger-config state: clear configured triggers (and any pending
+    // recognition) so project switches start with a blank triggers/ folder.
+    setTriggers([])
+    setTriggerStep('idle')
+    setPendingTrigger(null)
+    setLastConfirmedTrigger(null)
+    setEditingTriggerNameId(null)
+    setTriggerSimulations([])
   }
 
   const handleNewSession = () => {
@@ -1428,6 +2175,15 @@ export default function VibeCodingPage() {
   const submitFromHome = (text: string) => {
     const trimmed = text.trim()
     if (!trimmed) return
+    // Classify the prompt to pick which OutputShape the new project should
+    // adopt. Stored as a console hint for now; downstream we'll wire this
+    // into the new-project creation so the right-side preview routes
+    // correctly without manual PROJECT_KINDS edits.
+    const classifiedKind = classifyProjectKind(trimmed)
+    if (typeof window !== 'undefined' && (window as { __vc_log__?: unknown }).__vc_log__) {
+      // no-op; placeholder for future telemetry
+    }
+    void classifiedKind
     setHomeDraft('')
     setPlatformHomeOpen(false)
     sendChat(trimmed)
@@ -1444,8 +2200,10 @@ export default function VibeCodingPage() {
     return () => document.removeEventListener('pointerdown', handler)
   }, [sessionMenuOpen])
 
-  /** Send a chat message. Three triggers:
+  /** Send a chat message. Triggers:
    *  - 发布/更新 → publish flow
+   *  - 关注/评论/点赞/礼物/送礼/投稿时/投稿后 (ai-avatar project) →
+   *    trigger-config flow, parses event + action from the message
    *  - 第五人格/小程序 → activate the needs-gathering mock dialog
    *  - otherwise → just append the message bubble
    *  Accepts an optional `override` text (used by empty-state suggestion
@@ -1453,11 +2211,41 @@ export default function VibeCodingPage() {
   const sendChat = (override?: string) => {
     const text = (override ?? chatDraft).trim()
     if (!text) return
-    let trigger: 'none' | 'publish' | 'needs' = 'none'
+    let trigger: 'none' | 'publish' | 'needs' | 'trigger' = 'none'
     if (/发布|更新/.test(text)) {
       trigger = 'publish'
       resetPublish()
       startPublish('chat')
+    } else if (
+      activeProjectKind === 'ai-avatar' &&
+      /关注|评论|点赞|礼物|送礼|投稿时|投稿后/.test(text)
+    ) {
+      // Pick the preset event that matches the first keyword hit. Order
+      // matters — `送礼` beats `礼物` only because both resolve to the
+      // same id, so we check the broader `礼物|送礼` union in one step.
+      const eventId: TriggerEventId = /关注/.test(text)
+        ? 'user-follow'
+        : /评论/.test(text)
+          ? 'user-comment'
+          : /点赞/.test(text)
+            ? 'user-like'
+            : /礼物|送礼/.test(text)
+              ? 'user-gift'
+              : 'user-post'
+      const quoted =
+        text.match(/["'“”「](.+?)["'”'」]/)?.[1] ?? '欢迎关注'
+      const preset = TRIGGER_PRESETS[eventId]
+      setPendingTrigger({
+        id: `${eventId}-${Date.now().toString(36)}`,
+        name: preset.name,
+        event: preset.event,
+        action: {
+          ...DEFAULT_TRIGGER_ACTION,
+          description: `向用户发送"${quoted}"`,
+        },
+      })
+      setTriggerStep('loading')
+      trigger = 'trigger'
     } else if (/第五人格|小程序/.test(text)) {
       trigger = 'needs'
       setNeedsFlowActive(true)
@@ -1470,6 +2258,9 @@ export default function VibeCodingPage() {
       setFormSubmitted(false)
     }
     if (chatCleared) setChatCleared(false)
+    // Clear the previous trigger confirmation so the success summary
+    // doesn't linger above the next user message.
+    if (lastConfirmedTrigger) setLastConfirmedTrigger(null)
     // If this is the first message in a still-default-named session,
     // borrow the user's prompt as the session title (capped at ~20 chars).
     if (sentMessages.length === 0) {
@@ -1483,7 +2274,9 @@ export default function VibeCodingPage() {
       )
     }
     setSentMessages((prev) => [...prev, { text, trigger }])
-    setChatDraft('')
+    // Clear both the state AND the contentEditable DOM (innerText won't
+    // auto-reset from setChatDraft since the div is uncontrolled).
+    setComposerText('')
     // Scroll to bottom after React commits the new message.
     requestAnimationFrame(() => {
       const el = chatScrollRef.current
@@ -1571,9 +2364,10 @@ export default function VibeCodingPage() {
   }
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set(['src', 'src/pages', 'src/components']))
   /* Lifted from PlatformSidebar so opening a file anywhere can guarantee
-   * the sidebar's owning project is expanded + visible. */
+   * the sidebar's owning project is expanded + visible. Starts empty
+   * since the platform lands on the home view — no project highlighted. */
   const [platformOpenProjects, setPlatformOpenProjects] = useState<Set<string>>(
-    new Set(['项目名称_02']),
+    new Set(),
   )
 
   const fileTree: FileNode[] = [
@@ -1680,22 +2474,148 @@ export default function VibeCodingPage() {
     })
   }
 
+  /* File tree for the AI 分身 project — persona config + skills folders +
+   * knowledge base files. Stub content; opening these files just creates
+   * an empty tab since they aren't in codeFiles. */
+  const aiPersonaFileTree: FileNode[] = [
+    { name: 'persona.yaml', type: 'file' },
+    { name: 'greeting.md', type: 'file' },
+    { name: 'voice-guide.md', type: 'file' },
+    {
+      name: '.agent',
+      type: 'dir',
+      children: [
+        { name: 'manifest.json', type: 'file' },
+        {
+          name: 'skills',
+          type: 'dir',
+          children: [
+            {
+              name: 'astrology',
+              type: 'dir',
+              children: [
+                { name: 'SKILL.md', type: 'file' },
+                { name: 'manifest.yaml', type: 'file' },
+              ],
+            },
+            {
+              name: 'emotional-coach',
+              type: 'dir',
+              children: [
+                { name: 'SKILL.md', type: 'file' },
+                { name: 'manifest.yaml', type: 'file' },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: 'knowledge',
+      type: 'dir',
+      children: [
+        { name: 'zodiac.md', type: 'file' },
+        { name: 'relationships.md', type: 'file' },
+        { name: 'self-growth.md', type: 'file' },
+      ],
+    },
+    // triggers/ folder only appears once the user configures at least
+    // one trigger via the chat flow. Each file maps 1:1 to an entry in
+    // `triggers[]` via the filename suffix (last 6 chars of the id).
+    ...(triggers.length > 0
+      ? [
+          {
+            name: 'triggers',
+            type: 'dir' as const,
+            children: triggers.map((t) => ({
+              name: `${t.event.id}-${t.id.slice(-6)}.trigger.json`,
+              type: 'file' as const,
+            })),
+          },
+        ]
+      : []),
+  ]
+
+  /* Which file tree belongs to each project. Projects not in this map
+   * are treated as empty stubs ("暂无文件"). 沪上火锅 starts as a stub —
+   * the proposal flow appends its generated artefacts (商家目标卡.md,
+   * 提案报告.md, 复盘.md, 执行看板.json …) into the 'briefs' / 'reports'
+   * folders as the chat-driven steps complete. */
+  const [projectTrees, setProjectTrees] = useState<Record<string, FileNode[]>>({
+    '第五人格塔罗小程序': fileTree,
+    '陶白白 Sensei 分身': aiPersonaFileTree,
+    '沪上火锅·五一种草提案': [
+      { name: 'briefs', type: 'dir', children: [] },
+      { name: 'configs', type: 'dir', children: [] },
+      { name: 'reports', type: 'dir', children: [] },
+      { name: 'dashboards', type: 'dir', children: [] },
+    ],
+  })
+
   /* preview tab */
-  const [openTabs, setOpenTabs] = useState([
-    { label: '产物预览', closable: false },
-    { label: 'soul.md', closable: true },
-    { label: 'app.tsx', closable: true },
-  ])
+  // For proposal deep-link entries the right preview starts empty
+  // (artefact tabs auto-append later via the proposalDocs effect). For
+  // other project kinds we seed the standard 产物预览 + soul.md +
+  // app.tsx tabs.
+  const wantsProposalDeepLink =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('project') === 'proposal'
+  const [openTabs, setOpenTabs] = useState(() =>
+    wantsProposalDeepLink
+      ? []
+      : [
+          { label: '产物预览', closable: false },
+          { label: 'soul.md', closable: true },
+          { label: 'app.tsx', closable: true },
+        ],
+  )
   // Default: 打开 soul.md（AI 分身定义）作为第一眼看到的文件，其次 app.tsx
   // 可关。工作区布局下，产物预览 tab 也通过 productPinned 保持高亮。
-  const [activePreviewTab, setActivePreviewTab] = useState(1)
+  const [activePreviewTab, setActivePreviewTab] = useState(
+    wantsProposalDeepLink ? 0 : 1,
+  )
+
+  // When the right preview area is fully hidden (artifact-shape projects
+  // with no artefacts yet), center the chat in the area between the
+  // project sidebar and the right viewport edge — capped at
+  // PREVIEW_HIDDEN_CHAT_MAX so the line length stays readable on wide
+  // monitors. Both `width` and `left` are recomputed so the column reads
+  // as a single centered surface with empty padding on both sides.
+  // openTabs being empty is the sentinel; only proposal mode reaches it
+  // since other shapes seed a 产物预览 tab.
+  const PREVIEW_HIDDEN_CHAT_MAX = 760
+  const previewHidden = openTabs.length === 0
+  const effectiveChatWidth: string | number = previewHidden
+    ? `min(calc(100vw - ${effectiveSidebarWidth}px), ${PREVIEW_HIDDEN_CHAT_MAX}px)`
+    : chatWidthPx
+  const effectiveChatLeft: string | number = previewHidden
+    ? `calc(${effectiveSidebarWidth}px + max(0px, (100vw - ${effectiveSidebarWidth}px - ${PREVIEW_HIDDEN_CHAT_MAX}px) / 2))`
+    : effectiveSidebarWidth
 
   const openFileInTab = (filename: string) => {
+    // Trigger files route to the structured detail view, not codeFiles.
+    // Filename pattern: `${event.id}-${id.slice(-6)}.trigger.json`.
+    if (filename.endsWith('.trigger.json')) {
+      const match = triggers.find(
+        (t) => `${t.event.id}-${t.id.slice(-6)}.trigger.json` === filename,
+      )
+      if (match) {
+        openTriggerTab(match)
+        return
+      }
+    }
     const existing = openTabs.findIndex((t) => t.label === filename)
     if (existing >= 0) {
       setActivePreviewTab(existing)
     } else {
-      const next = [...openTabs, { label: filename, closable: true }]
+      // Proposal-flow artefacts (人群诊断.md, 人群诊断看板, 提案报告.md…)
+      // pin as non-closable so the right preview reads as a stable
+      // "产物总览" surface — once an artefact exists it stays.
+      const isProposalArtefact = filename in proposalDocs
+      const next = [
+        ...openTabs,
+        { label: filename, closable: !isProposalArtefact },
+      ]
       setOpenTabs(next)
       setActivePreviewTab(next.length - 1)
     }
@@ -1721,6 +2641,123 @@ export default function VibeCodingPage() {
     }
   }
 
+  /* ─── Resource library page state ─── */
+  // Read the deep-link query at mount so the first paint already shows
+  // the resource library — avoids the home-then-flash-to-library
+  // hiccup that an effect-based hydration would produce.
+  const initialFromQuery =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('page') === 'resources'
+  const [platformResourceLibraryOpen, setPlatformResourceLibraryOpen] =
+    useState(initialFromQuery)
+  const [platformSkillsOpen, setPlatformSkillsOpen] = useState(false)
+  const [platformCreativeSquareOpen, setPlatformCreativeSquareOpen] =
+    useState(false)
+  /** Any non-workspace platform-level overlay is open. Used to hide the
+   *  chat aside, header, and adjust body margins / padding. */
+  const platformSecondaryPageOpen =
+    platformResourceLibraryOpen ||
+    platformSkillsOpen ||
+    platformCreativeSquareOpen
+  const [resourceLibraryPrimary, setResourceLibraryPrimary] =
+    useState<PrimaryCategory | null>('官方')
+  const [resourceLibrarySecondary, setResourceLibrarySecondary] = useState<
+    string | null
+  >(null)
+  const [resourceLibraryCapability, setResourceLibraryCapability] = useState<
+    { platformId: string; name: string; category: string | null } | null
+  >(null)
+  const [resourceLibraryExpanded, setResourceLibraryExpanded] = useState<
+    Set<PrimaryCategory>
+  >(
+    () =>
+      new Set([
+        '业务平台',
+        '舆情监控',
+        '内容理解与生成',
+        '数据分析和处理',
+        '开发和效率',
+        '官方引入',
+      ]),
+  )
+  const [resourceLibrarySearch, setResourceLibrarySearch] = useState('')
+  const [resourceLibraryTypeFilter, setResourceLibraryTypeFilter] = useState<
+    ResourceLibraryTypeFilter
+  >('skill-tool')
+  /** When set, the workspace mounts and inserts an @-mention with this
+   *  shape into the chat composer once it's available. Consumed by an
+   *  effect so the DOM ref is ready before we manipulate it.
+   *  `id` doubles as the mention pill's data-mention-id. */
+  const [pendingMention, setPendingMention] = useState<
+    { id: string; name: string } | null
+  >(null)
+  const toggleResourceLibraryExpanded = (primary: PrimaryCategory) => {
+    setResourceLibraryExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(primary)) next.delete(primary)
+      else next.add(primary)
+      return next
+    })
+  }
+  const openResourceLibraryPage = () => {
+    setPlatformHomeOpen(false)
+    setPlatformSkillsOpen(false)
+    setPlatformCreativeSquareOpen(false)
+    setPlatformResourceLibraryOpen(true)
+  }
+
+  /** Query-string deep link: `?page=resources` opens the library on
+   *  initial load (and via browser back/forward). Using the query
+   *  string keeps the hash free for external tools (e.g. Figma's
+   *  capture script uses `#figmacapture=...`) without interference. */
+  useEffect(() => {
+    const sync = () => {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('page') === 'resources') {
+        setPlatformHomeOpen(false)
+        setPlatformSkillsOpen(false)
+        setPlatformCreativeSquareOpen(false)
+        setPlatformResourceLibraryOpen(true)
+      }
+    }
+    sync()
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Mirror the library-open state back to the URL so the page is
+   *  shareable / refresh-safe. Uses replaceState to avoid spurious
+   *  history entries. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (platformResourceLibraryOpen) {
+      params.set('page', 'resources')
+    } else {
+      params.delete('page')
+    }
+    const qs = params.toString()
+    const next =
+      window.location.pathname +
+      (qs ? `?${qs}` : '') +
+      window.location.hash
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, '', next)
+    }
+  }, [platformResourceLibraryOpen])
+  const openPlatformSkillsPage = () => {
+    setPlatformHomeOpen(false)
+    setPlatformResourceLibraryOpen(false)
+    setPlatformCreativeSquareOpen(false)
+    setPlatformSkillsOpen(true)
+  }
+  const openPlatformCreativeSquarePage = () => {
+    setPlatformHomeOpen(false)
+    setPlatformResourceLibraryOpen(false)
+    setPlatformSkillsOpen(false)
+    setPlatformCreativeSquareOpen(true)
+  }
+
   const closeTab = (index: number) => {
     if (!openTabs[index]?.closable) return
     const next = openTabs.filter((_, i) => i !== index)
@@ -1729,6 +2766,254 @@ export default function VibeCodingPage() {
     else if (activePreviewTab === index) setActivePreviewTab(Math.max(0, index - 1))
   }
 
+  /* ─── Trigger detail tab helpers ─── */
+  /** Tab label for a trigger — keyed off the event label (stable even
+   *  when the user renames the trigger). Used as the single identifier
+   *  tying openTabs to the triggers[] array in `renderTab`. */
+  const triggerTabLabel = (t: TriggerConfig) => `触发器·${t.event.label}`
+  /** Open the detail tab for a configured trigger. Find-or-push pattern
+   *  matches openChangesDetail so duplicates never accumulate. */
+  const openTriggerTab = (t: TriggerConfig) => {
+    const label = triggerTabLabel(t)
+    const existing = openTabs.findIndex((tab) => tab.label === label)
+    if (existing >= 0) {
+      setActivePreviewTab(existing)
+    } else {
+      const next = [...openTabs, { label, closable: true }]
+      setOpenTabs(next)
+      setActivePreviewTab(next.length - 1)
+    }
+  }
+  /** Remove a trigger. Also closes its detail tab if open, and clears
+   *  any in-flight rename on that trigger. */
+  const deleteTrigger = (id: string) => {
+    const t = triggers.find((x) => x.id === id)
+    if (!t) return
+    const label = triggerTabLabel(t)
+    setTriggers((prev) => prev.filter((x) => x.id !== id))
+    if (editingTriggerNameId === id) setEditingTriggerNameId(null)
+    const idx = openTabs.findIndex((tab) => tab.label === label)
+    if (idx >= 0) closeTab(idx)
+  }
+  /** Rename a trigger's display title. Tab label stays fixed (derived
+   *  from the event, not the name), so no tab-sync needed. */
+  const renameTrigger = (id: string, name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    setTriggers((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, name: trimmed } : t)),
+    )
+  }
+  /** Append a generated artefact file into the 沪上火锅 project tree
+   *  under the given top-level folder. Auto-expands the folder so the
+   *  new file is visible without hunting in the tree. */
+  const appendProposalFile = (folder: string, filename: string) => {
+    setProjectTrees((prev) => {
+      const tree = prev['沪上火锅·五一种草提案']
+      if (!tree) return prev
+      const next = tree.map((node) =>
+        node.name === folder && node.type === 'dir'
+          ? {
+              ...node,
+              children: [
+                ...(node.children ?? []).filter((c) => c.name !== filename),
+                { name: filename, type: 'file' as const },
+              ],
+            }
+          : node,
+      )
+      return { ...prev, '沪上火锅·五一种草提案': next }
+    })
+    setExpandedDirs((prev) => {
+      const next = new Set(prev)
+      next.add(folder)
+      return next
+    })
+  }
+
+  /** Auto-append a non-closable preview tab whenever the proposal flow
+   *  produces a new artefact. Activates the new tab so the user lands on
+   *  it immediately. Only runs in artifact-shape projects (sentinel via
+   *  proposalDocs being non-empty for this case). */
+  useEffect(() => {
+    const docKeys = Object.keys(proposalDocs)
+    if (docKeys.length === 0) return
+    setOpenTabs((prev) => {
+      const known = new Set(prev.map((t) => t.label))
+      const additions = docKeys
+        .filter((k) => !known.has(k))
+        .map((k) => ({ label: k, closable: false }))
+      if (additions.length === 0) return prev
+      const next = [...prev, ...additions]
+      // Activate the most recent addition so the user immediately sees
+      // the freshly produced artefact.
+      setActivePreviewTab(next.length - 1)
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposalDocs])
+
+  /** Step 2 — run the audience & traffic diagnosis. Appends both the
+   *  人群诊断.md doc and a 人群诊断看板 visual dashboard, then advances the
+   *  flow to `audience-diagnosed`. The dashboard renders via
+   *  ProposalAudienceDashboard when opened (see renderTab dispatch). */
+  const runAudienceDiagnosis = () => {
+    const filename = '人群诊断.md'
+    const dashboardName = '人群诊断看板'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderDiagnosisMarkdown(),
+      [dashboardName]: '',
+    }))
+    appendProposalFile('briefs', filename)
+    appendProposalFile('dashboards', dashboardName)
+    setProposalStep('audience-diagnosed')
+  }
+
+  /** Step 3 — confirm the chosen 达人包 strategy. Persists the pick into
+   *  configs/达人包.md and advances to `pack-ready`. */
+  const confirmProposalPack = (pick: ProposalPackId) => {
+    setProposalPack(pick)
+    const filename = '达人包.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderPackMarkdown(pick),
+    }))
+    appendProposalFile('configs', filename)
+    setProposalStep('pack-ready')
+  }
+
+  /** Step 4 — confirm play + brief assignment. Persists into
+   *  briefs/玩法brief.md and advances to `brief-ready`. */
+  const confirmProposalBrief = () => {
+    const filename = '玩法brief.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderBriefMarkdown(),
+    }))
+    appendProposalFile('briefs', filename)
+    setProposalStep('brief-ready')
+  }
+
+  /** Step 5 — assemble the full proposal report. Persists into
+   *  reports/提案报告.md and advances to `report-ready`. */
+  const assembleProposalReport = () => {
+    if (!proposalGoal || !proposalPack) return
+    const filename = '提案报告.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderReportMarkdown(proposalGoal, proposalPack),
+    }))
+    appendProposalFile('reports', filename)
+    setProposalStep('report-ready')
+  }
+
+  /** Step 6 — convert the report into an execution dashboard. Persists
+   *  into dashboards/执行看板.md and advances to `dashboard-ready`. */
+  const convertProposalToDashboard = () => {
+    const filename = '执行看板.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderDashboardMarkdown(),
+    }))
+    appendProposalFile('dashboards', filename)
+    setProposalStep('dashboard-ready')
+  }
+
+  /** Step 7 — run the post-execution review. Persists into
+   *  reports/复盘.md and advances to terminal `review-ready`. */
+  const runProposalReview = () => {
+    const filename = '复盘.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderReviewMarkdown(),
+    }))
+    appendProposalFile('reports', filename)
+    setProposalStep('review-ready')
+  }
+
+  /** Step 1 submit — render the merchant goal draft into markdown,
+   *  append the file to the 沪上火锅 project tree under briefs/, advance
+   *  the proposal flow to `goal-confirmed` so the chat can show the AI
+   *  目标解析 + 追问 follow-up. */
+  const submitProposalGoal = (draft: ProposalGoalDraft) => {
+    setProposalGoal(draft)
+    setProposalStep('goal-confirmed')
+    const filename = '商家目标卡.md'
+    setProposalDocs((prev) => ({
+      ...prev,
+      [filename]: renderGoalMarkdown(draft),
+    }))
+    appendProposalFile('briefs', filename)
+  }
+
+  /** Order of proposal steps — used to decide whether the rendered chat
+   *  should include cumulative bubbles for past steps. */
+  const PROPOSAL_ORDER = [
+    'idle',
+    'collecting',
+    'goal-confirmed',
+    'audience-diagnosed',
+    'pack-ready',
+    'brief-ready',
+    'report-ready',
+    'dashboard-ready',
+    'review-ready',
+  ] as const
+  const proposalAtOrPast = (step: ProposalStep) =>
+    PROPOSAL_ORDER.indexOf(proposalStep) >=
+    PROPOSAL_ORDER.indexOf(step)
+  /** True while a chat-embedded form is awaiting user input (Step 1
+   *  目标卡, Step 3 包选择, Step 4 玩法/Brief). The composer is replaced
+   *  with a focusing hint bar in this state so the user has a single
+   *  unambiguous action target. */
+  const proposalFormPendingLabel: string | null =
+    proposalStep === 'collecting'
+      ? '商家目标卡'
+      : proposalStep === 'audience-diagnosed'
+        ? '达人包策略'
+        : proposalStep === 'pack-ready'
+          ? '玩法 + Brief'
+          : null
+
+  /** Confirm the currently-pending trigger — commit it to triggers[],
+   *  clear pending state, auto-expand the triggers/ folder, and open
+   *  the new detail tab for immediate review. */
+  const confirmPendingTrigger = () => {
+    if (!pendingTrigger) return
+    const t = pendingTrigger
+    setTriggers((prev) => [...prev, t])
+    setExpandedDirs((prev) => {
+      const next = new Set(prev)
+      next.add('triggers')
+      return next
+    })
+    setTriggerStep('confirmed')
+    setPendingTrigger(null)
+    setLastConfirmedTrigger(t)
+    // Detail tab no longer auto-opens — the inline chat summary has a
+    // "view config" CTA and the sidebar shows the new triggers/ file, so
+    // the user can land on the detail view on their own schedule.
+  }
+  /** Discard the pending trigger so the user can re-phrase. */
+  const cancelPendingTrigger = () => {
+    setPendingTrigger(null)
+    setTriggerStep('idle')
+  }
+  /** Simulate a configured trigger firing in the phone preview. Appends
+   *  a new entry to `triggerSimulations`; the preview scrolls the new
+   *  reply into view via its own effect. */
+  const simulateTrigger = (t: TriggerConfig) => {
+    setTriggerSimulations((prev) => [
+      ...prev,
+      {
+        key: `${t.id}-${Date.now()}`,
+        eventId: t.event.id,
+        eventLabel: t.event.label,
+        actionDescription: t.action.description,
+      },
+    ])
+  }
   /* helper to build a code line */
   const L = (num: number, ...tokens: [string, string][]) => ({
     num,
@@ -2155,7 +3440,234 @@ export default function VibeCodingPage() {
   const [activeFilter, setActiveFilter] = useState('mini-program')
   /* Project/session rename — pencil icons flip these flags, the paired
    * span is replaced with an input, save on Enter/blur. */
-  const [projectTitle, setProjectTitle] = useState('第五人格塔罗小程序')
+  // Deep-link: `?project=proposal` opens the 沪上火锅 proposal flow
+  // pre-seeded so the demo lands on the goal-collection form. Default
+  // remains the 第五人格 mini-program when no project param is set.
+  const wantsProposalProject =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('project') === 'proposal'
+  const [projectTitle, setProjectTitle] = useState(
+    wantsProposalProject ? '沪上火锅·五一种草提案' : '第五人格塔罗小程序',
+  )
+  /* Derive the active project's "kind" from its title — controls which
+   * preview renders on the right and what label the product tab shows.
+   * Unknown project names default to mini-program so arbitrary renames
+   * don't accidentally flip the preview. */
+  const activeProjectKind: ProjectKind =
+    PROJECT_KINDS[projectTitle] ?? 'mini-program'
+  /** Drives the right-side preview container choice. Detailed kind still
+   *  picks variants inside each shape (e.g. ai-avatar vs mini-program
+   *  both live under 'app'). */
+  const activeOutputShape: OutputShape = SHAPE_BY_KIND[activeProjectKind]
+  const productTabLabel =
+    activeOutputShape === 'artifact'
+      ? '产物总览'
+      : activeProjectKind === 'ai-avatar'
+        ? 'AI 分身'
+        : '产物预览'
+  /* True when the active project has actual scaffolded content — drives
+   * whether the right-side preview renders the phone mock or an empty
+   * state. Stub projects (no entry in `projectTrees`) get the empty
+   * state since there's nothing meaningful to preview yet. */
+  const activeProjectHasTree = !!projectTrees[projectTitle]
+  const emptyProjectPreview = (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--fill-subtle)] text-[var(--color-ink)]/35">
+        <FolderClosed size={22} strokeWidth={1.6} />
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-[14px] font-medium text-[var(--color-ink)]/70">
+          此项目暂无内容
+        </p>
+        <p className="text-[12px] leading-[1.6] text-[var(--color-ink)]/45">
+          在左侧对话中描述你的需求，AI 会帮你搭建项目结构
+        </p>
+      </div>
+    </div>
+  )
+  /** Single "触发器测试" button rendered alongside the other preview
+   *  controls (重新加载 / 真机预览 / …). Hovering it pops a dropdown
+   *  listing every configured trigger; clicking an item fires the
+   *  simulation inside the phone. Kept outside the phone frame so the
+   *  preview stays visually authentic. */
+  const triggerSimBar =
+    activeProjectKind === 'ai-avatar' && triggers.length > 0 ? (
+      <div className="group relative inline-flex">
+        <button
+          type="button"
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-ink)]/55 transition-colors hover:bg-[var(--fill-soft)] hover:text-[var(--color-ink)]/85 group-hover:bg-[var(--fill-soft)] group-hover:text-[var(--color-ink)]/85"
+        >
+          <Zap size={11} strokeWidth={1.8} className="text-amber-500" />
+          <span>触发器测试</span>
+          <ChevronUp size={10} strokeWidth={1.8} className="text-[var(--color-ink)]/40" />
+        </button>
+        <div
+          className="pointer-events-none invisible absolute bottom-full left-1/2 z-50 mb-1.5 w-[220px] -translate-x-1/2 translate-y-1 rounded-lg border border-[var(--divider)] bg-[var(--color-surface-0)] py-1 opacity-0 shadow-[0_10px_24px_-10px_rgba(16,18,24,0.25)] transition-all duration-150 group-hover:pointer-events-auto group-hover:visible group-hover:translate-y-0 group-hover:opacity-100"
+        >
+          <div className="px-3 py-1 text-[10px] text-[var(--color-ink)]/45">
+            点击模拟触发
+          </div>
+          {triggers.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => simulateTrigger(t)}
+              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[12px] text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
+            >
+              <Zap size={10} strokeWidth={1.8} className="shrink-0 text-amber-500" />
+              <span className="truncate">模拟 {t.event.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null
+
+  /* Mention-picker data — derived every render so it stays in sync with
+   * the active project's file tree + triggers. Skills stay static since
+   * they come from the platform catalog, not per-project state. */
+  const activeFileTree =
+    projectTrees[projectTitle] ?? (activeProjectKind === 'ai-avatar' ? aiPersonaFileTree : fileTree)
+  const mentionSkills: MentionItem[] = CAPABILITY_OPTIONS.map((c) => ({
+    id: c.id,
+    name: c.title,
+    tag: c.kind === 'skill' ? 'Skill' : 'Knowledge',
+  }))
+  const mentionTools: MentionItem[] = [
+    { id: 'tool-search', name: '抖音搜索' },
+    { id: 'tool-image', name: '图片生成' },
+    { id: 'tool-publish', name: '发布助手' },
+    { id: 'tool-rag', name: 'RAG 检索' },
+  ]
+  const mentionFiles: MentionItem[] = flattenFileTreeForMention(activeFileTree)
+  /* Triggers tab lists preset CONDITIONS (the events the platform can
+   * hook on), not user-configured trigger instances. Picking one here
+   * is how the user scaffolds a new trigger via @ reference. */
+  const mentionTriggers: MentionItem[] = Object.values(TRIGGER_PRESETS).map((p) => ({
+    id: p.event.id,
+    name: p.event.label,
+    tag: p.event.scene,
+  }))
+  const mentionResources: MentionItem[] = RESOURCES.map((r) => ({
+    id: r.id,
+    name: r.name,
+    tag: r.secondaryCategory,
+  }))
+
+  /** Replace the most recent `@…` token at the caret with a non-editable
+   *  pill node, then place the caret after an inserted trailing space.
+   *  Uses the DOM Selection API directly because the composer is a
+   *  contentEditable div, not an <input>. */
+  const insertMention = (item: MentionItem, kind: MentionKind) => {
+    const editor = chatInputRef.current
+    if (!editor) return
+    editor.focus()
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) {
+      // Fallback: append at end if no active selection.
+      const pill = buildMentionPill(item, kind)
+      editor.append(pill, document.createTextNode(' '))
+      setChatDraft(editor.innerText)
+      setMentionAnchor(null)
+      return
+    }
+    const range = sel.getRangeAt(0)
+    // Walk backwards from the caret through text nodes to find the most
+    // recent '@' within the same container. Covers the common case where
+    // the user just typed '@' (caret is inside a text node after '@').
+    const node = range.endContainer
+    const offset = range.endOffset
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? ''
+      const atIdx = text.lastIndexOf('@', offset - 1)
+      if (atIdx >= 0) {
+        const deleteRange = document.createRange()
+        deleteRange.setStart(node, atIdx)
+        deleteRange.setEnd(node, offset)
+        deleteRange.deleteContents()
+        // deleteContents leaves the caret at the deletion point.
+      }
+    }
+    const pill = buildMentionPill(item, kind)
+    const space = document.createTextNode(' ')
+    range.insertNode(space)
+    range.insertNode(pill)
+    // Move caret after the space.
+    range.setStartAfter(space)
+    range.setEndAfter(space)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    setChatDraft(editor.innerText)
+    setMentionAnchor(null)
+  }
+
+  /** Append an @-mention to the composer and bring the chat to the
+   *  foreground. The composer DOM is unmounted while the resource library
+   *  page is showing, so we stash the target in `pendingMention` and let
+   *  an effect run the insert once the workspace remounts. */
+  const useCapabilityInChat = (platform: Resource, capability: Capability) => {
+    setActivePreviewTab(0)
+    setResourceLibraryCapability(null)
+    setPlatformResourceLibraryOpen(false)
+    setPendingMention({
+      id: `${platform.id}#${capability.name}#${capability.category ?? ''}`,
+      name: capability.name,
+    })
+  }
+
+  /** Auto-scroll the chat so the latest AI bubble lands at the top of
+   *  the viewport every time the proposal flow advances. Long replies +
+   *  inline cards otherwise force the user to scroll up to read from the
+   *  start. The anchor sentinel for each stage is rendered with
+   *  `data-proposal-anchor="{stage}"` so we don't depend on element
+   *  position counting. */
+  useEffect(() => {
+    if (proposalStep === 'idle' || proposalStep === 'collecting') return
+    // Defer one frame so the new bubble is mounted before we scroll.
+    const tid = setTimeout(() => {
+      const scroller = chatScrollRef.current
+      if (!scroller) return
+      const anchor = scroller.querySelector(
+        `[data-proposal-anchor="${proposalStep}"]`,
+      ) as HTMLElement | null
+      if (!anchor) return
+      const scrollerRect = scroller.getBoundingClientRect()
+      const anchorRect = anchor.getBoundingClientRect()
+      const delta = anchorRect.top - scrollerRect.top - 12 // 12px breathing room
+      scroller.scrollBy({ top: delta, behavior: 'smooth' })
+    }, 50)
+    return () => clearTimeout(tid)
+  }, [proposalStep])
+
+  /** Drain any pending @-mention into the chat composer once the
+   *  workspace (and chatInputRef) has remounted. */
+  useEffect(() => {
+    if (!pendingMention) return
+    if (platformSecondaryPageOpen || platformHomeOpen) return
+    const editor = chatInputRef.current
+    if (!editor) return
+    editor.focus()
+    const last = editor.lastChild
+    const tail = last?.textContent ?? ''
+    if (last && !/\s$/.test(tail)) {
+      editor.append(document.createTextNode(' '))
+    }
+    const pill = buildMentionPill(
+      { id: pendingMention.id, name: pendingMention.name },
+      'resources',
+    )
+    editor.append(pill, document.createTextNode(' '))
+    const sel = window.getSelection()
+    if (sel) {
+      const range = document.createRange()
+      range.selectNodeContents(editor)
+      range.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+    setChatDraft(editor.innerText)
+    setPendingMention(null)
+  }, [pendingMention, platformSecondaryPageOpen, platformHomeOpen])
+
   const [editingProjectTitle, setEditingProjectTitle] = useState(false)
   /* Which session row (if any) is in inline-edit mode inside the dropdown. */
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
@@ -2235,7 +3747,7 @@ export default function VibeCodingPage() {
           style={{ width: platformSidebarWidth }}
         >
           <PlatformSidebar
-            fileTree={fileTree}
+            projectTrees={projectTrees}
             expandedDirs={expandedDirs}
             toggleDir={toggleDir}
             openFileInTab={openFileInTab}
@@ -2246,16 +3758,62 @@ export default function VibeCodingPage() {
             onSwitchProject={(name) => {
               // Switch the right-side workspace to the clicked project.
               // Drops the existing chat and lands the user in a fresh
-              // session scoped to the new project.
+              // session scoped to the new project. activePreviewTab=0
+              // lands on the product preview so users immediately see
+              // the new project's primary surface (mini-program / AI 分身).
               setProjectTitle(name)
               handleNewSession()
               setPlatformHomeOpen(false)
+              setPlatformResourceLibraryOpen(false)
+              setPlatformSkillsOpen(false)
+              setPlatformCreativeSquareOpen(false)
+              setActivePreviewTab(0)
+              // Proposal flow init: opening the 沪上火锅 case lands the
+              // user on the goal-collection form. Other projects reset
+              // the proposal state so a stale form doesn't leak across.
+              if (PROJECT_KINDS[name] === 'ops-proposal') {
+                setProposalStep('collecting')
+                setProposalGoal(null)
+                setProposalDocs({})
+                setStep2BubbleStreamed(false)
+                setStep3ClosingBubbleStreamed(false)
+                setChatCleared(false)
+                // Artifact projects start with no tabs at all — the right
+                // preview area only appears once artefacts get generated
+                // (each one auto-appended as a non-closable tab via the
+                // proposalDocs effect below).
+                setOpenTabs([])
+                setActivePreviewTab(0)
+                // Seed the kick-off user message so the conversation reads
+                // top-down: 用户提需求 → AI 回复并附上目标卡表单。
+                setSentMessages([
+                  {
+                    text: '帮我做沪上火锅品牌五一前的潜客种草提案，预算 50w，目标是 A3 种草和看后搜提升',
+                    trigger: 'proposal',
+                  },
+                ])
+              } else {
+                setProposalStep('idle')
+                setProposalGoal(null)
+              }
             }}
             onCollapseAll={() => {
               // Fold every open folder + project down to the root level.
               setExpandedDirs(new Set())
               setPlatformOpenProjects(new Set())
             }}
+            onOpenResourceLibrary={openResourceLibraryPage}
+            onOpenSkills={openPlatformSkillsPage}
+            onOpenCreativeSquare={openPlatformCreativeSquarePage}
+            activeNav={
+              platformResourceLibraryOpen
+                ? '资源库'
+                : platformSkillsOpen
+                  ? 'Skills'
+                  : platformCreativeSquareOpen
+                    ? '创意广场'
+                    : null
+            }
           />
           {/* Right-edge drag handle */}
           <div
@@ -2314,8 +3872,10 @@ export default function VibeCodingPage() {
 
       {/* ══════ Header ══════ Platform: fixed as the card's top strip (no
           back / publish). Others: normal in-flow top bar. Hidden on the
-          platform home screen since a new project has no title yet. */}
-      {!(isPlatform && platformHomeOpen) && (
+          platform home screen and the 资源库 page — both are second-level
+          views that don't belong to a project, so showing a project title
+          would be misleading. */}
+      {!(isPlatform && (platformHomeOpen || platformSecondaryPageOpen)) && (
       <header
         className={`z-20 flex items-center justify-between px-4 transition-[margin] duration-300 ${
           isPlatform
@@ -2544,22 +4104,26 @@ export default function VibeCodingPage() {
       <div
         className={`relative z-10 flex min-h-0 flex-1 overflow-hidden transition-[margin] duration-300 ${
           chatCollapsed || isPlatform ? '' : bodyMarginClass
-        } ${isPlatform && !platformHomeOpen ? 'pt-14' : ''}`}
+        } ${isPlatform && !platformHomeOpen && !platformSecondaryPageOpen ? 'pt-14' : ''}`}
         style={
           isPlatform
             ? {
-                marginLeft:
-                  effectiveSidebarWidth + (platformHomeOpen ? 0 : platformChatWidth),
+                marginLeft: previewHidden
+                  ? `calc(${effectiveSidebarWidth}px + min(calc(100vw - ${effectiveSidebarWidth}px), ${PREVIEW_HIDDEN_CHAT_MAX}px))`
+                  : effectiveSidebarWidth +
+                    (platformHomeOpen || platformSecondaryPageOpen
+                      ? 0
+                      : platformChatWidth),
               }
             : undefined
         }
       >
-        {/* ────── Chat aside — fixed to viewport. Code: below header, flush left with 20px gutter. Platform: flush against the preview inside the shared card (card frame is painted separately just below). Otherwise: pins top-0 on the right with a rounded glass panel. Hidden when platform home screen is active. ────── */}
-        {!(isPlatform && platformHomeOpen) && (
+        {/* ────── Chat aside — fixed to viewport. Code: below header, flush left with 20px gutter. Platform: flush against the preview inside the shared card (card frame is painted separately just below). Otherwise: pins top-0 on the right with a rounded glass panel. Hidden when platform home screen / resource library page is active. ────── */}
+        {!(isPlatform && (platformHomeOpen || platformSecondaryPageOpen)) && (
         <aside
           className={`fixed z-30 flex flex-shrink-0 items-center transition-[width] duration-300 ${
             isPlatform
-              ? 'top-14 bottom-3 border-r border-[var(--divider-soft)]'
+              ? `top-14 bottom-3 ${previewHidden ? '' : 'border-r border-[var(--divider-soft)]'}`
               : chatOnLeft
                 ? 'left-5 top-14 bottom-5'
                 : 'right-0 top-0 bottom-0'
@@ -2578,8 +4142,8 @@ export default function VibeCodingPage() {
                 ? { left: effectiveSidebarWidth }
                 : undefined
               : isPlatform
-                ? { width: chatWidthPx, left: effectiveSidebarWidth }
-                : { width: chatWidthPx }
+                ? { width: effectiveChatWidth, left: effectiveChatLeft }
+                : { width: effectiveChatWidth }
           }
         >
           <div
@@ -2688,8 +4252,15 @@ export default function VibeCodingPage() {
           </div>
           {/* Scrollable messages */}
           <div ref={chatScrollRef} className={`thin-scroll flex-1 overflow-y-auto px-2.5 pt-8 pb-8 ${chatCleared ? '' : 'space-y-6'} ${fadeClassFromEdges(chatScrollEdges)}`}>
-            {chatCleared || (!needsFlowActive && !showChatPublish && sentMessages.length === 0) ? (
-              <ChatEmptyState onPick={(t) => sendChat(t)} />
+            {(chatCleared || (!needsFlowActive && !showChatPublish && sentMessages.length === 0)) && proposalStep === 'idle' ? (
+              <ChatEmptyState
+                suggestions={
+                  activeProjectKind === 'ai-avatar'
+                    ? AI_AVATAR_CHAT_SUGGESTIONS
+                    : CHAT_EMPTY_SUGGESTIONS
+                }
+                onPick={(t) => sendChat(t)}
+              />
             ) : (<>
 
             {/* ── User-sent messages — always rendered first. Plain
@@ -2713,6 +4284,705 @@ export default function VibeCodingPage() {
                 )}
               </Fragment>
             ))}
+
+            {/* ── 种草提案 Step 1 — 商家目标卡 collection ── */}
+            {proposalAtOrPast('collecting') && (
+              <div
+                id="proposal-step-1"
+                data-proposal-anchor="collecting"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalStep === 'collecting' && (
+              <Sequential>
+                {(step, next) => (
+                  <>
+                    <motion.p
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                      className="text-[14px] leading-[20px] text-[var(--color-ink)]"
+                    >
+                      <Stream onDone={next}>
+                        我帮你拆下这次种草提案。先把商家目标卡补完，AI 会把模糊诉求结构化成可执行的种草目标，并标出需要重点监控的指标。
+                      </Stream>
+                    </motion.p>
+                    {step >= 2 && (
+                      <RevealAfter delay={120}>
+                        <ProposalGoalCard onSubmit={submitProposalGoal} />
+                      </RevealAfter>
+                    )}
+                  </>
+                )}
+              </Sequential>
+            )}
+            {/* ── Step 1 closing — goal confirmed ── */}
+            {proposalAtOrPast('goal-confirmed') && proposalGoal && (
+              <UserEchoBubble
+                title="已补完商家目标卡"
+                fields={[
+                  {
+                    label: '品牌',
+                    value: `${proposalGoal.brand} · ${proposalGoal.category}`,
+                  },
+                  {
+                    label: '预算 / 周期',
+                    value: `${proposalGoal.budget} · ${proposalGoal.period}`,
+                  },
+                  { label: '目标人群', value: proposalGoal.audience },
+                  {
+                    label: '核心诉求',
+                    value: truncate(proposalGoal.ask, 80),
+                  },
+                ]}
+                footer="约束条件已存档"
+              />
+            )}
+            {proposalAtOrPast('goal-confirmed') && (
+              <div
+                data-proposal-anchor="goal-confirmed"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('goal-confirmed') && proposalGoal && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          目标已结构化，已沉淀第一份产物：
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={120} onDone={next}>
+                          <ArtifactCard
+                            filename="商家目标卡.md"
+                            summary={PROPOSAL_FILE_SUMMARY['商家目标卡.md']}
+                            onOpen={() => openFileInTab('商家目标卡.md')}
+                          />
+                        </RevealAfter>
+                      )}
+                      {step >= 3 && (
+                        <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/75">
+                          <Stream onDone={next}>
+                            {'这次的核心目标是'}
+                            <strong>五一节点前潜客种草 + 看后搜意向提升</strong>
+                            {'，建议组合策略：头部品宣建立认知 + 本地垂类达人真实体验 + 中腰部场景覆盖 + 素人挑战扩散 + 可投广内容放大。'}
+                          </Stream>
+                        </p>
+                      )}
+                      {step >= 4 && (
+                        <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                          <Stream onDone={next}>
+                            {'下一步我会接入 '}
+                            <MentionChip name="风神" />
+                            {' / '}
+                            <MentionChip name="iDA" />
+                            {' 拉一下同类商家的人群覆盖和流量结构，做人群与流量诊断。'}
+                          </Stream>
+                        </p>
+                      )}
+                      {step >= 5 && proposalStep === 'goal-confirmed' && (
+                        <RevealAfter delay={120}>
+                          <button
+                            type="button"
+                            onClick={runAudienceDiagnosis}
+                            className="rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90"
+                          >
+                            运行人群与流量诊断
+                          </button>
+                        </RevealAfter>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 2 — 人群与流量诊断 ── */}
+            {proposalAtOrPast('audience-diagnosed') && (
+              <div
+                id="proposal-step-2"
+                data-proposal-anchor="audience-diagnosed"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('audience-diagnosed') && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          {'已通过 '}
+                          <MentionChip name="风神" />
+                          {' 拉取同类火锅品牌过去 30 天指标，'}
+                          <MentionChip name="iDA" />
+                          {' 拆出商家的 A3 / 看后搜结构。'}
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={150} onDone={next}>
+                          <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                            诊断结果：
+                          </p>
+                        </RevealAfter>
+                      )}
+                      {step >= 3 && (
+                        <RevealAfter delay={200} onDone={next}>
+                          <ProposalDiagnosisCard />
+                        </RevealAfter>
+                      )}
+                      {step >= 4 && (
+                        <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                          <Stream onDone={next}>
+                            完整诊断已沉淀到下面这两份产物，每日 AI 会持续刷新看板：
+                          </Stream>
+                        </p>
+                      )}
+                      {step >= 5 && (
+                        <RevealAfter
+                          delay={120}
+                          onDone={() => {
+                            next()
+                            setStep2BubbleStreamed(true)
+                          }}
+                        >
+                          <ArtifactCardGroup>
+                            <ArtifactCard
+                              filename="人群诊断.md"
+                              summary={PROPOSAL_FILE_SUMMARY['人群诊断.md']}
+                              onOpen={() => openFileInTab('人群诊断.md')}
+                            />
+                            <ArtifactCard
+                              filename="人群诊断看板"
+                              kind="dashboard"
+                              summary={PROPOSAL_FILE_SUMMARY['人群诊断看板']}
+                              onOpen={() => openFileInTab('人群诊断看板')}
+                            />
+                          </ArtifactCardGroup>
+                        </RevealAfter>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 3 — 达人包策略 (selector while pack still pending) ── */}
+            {proposalAtOrPast('audience-diagnosed') && <div id="proposal-step-3" className="h-0" aria-hidden />}
+            {proposalStep === 'audience-diagnosed' && step2BubbleStreamed && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          {'基于诊断结论，我帮你组了 3 套达人包，已结合 '}
+                          <MentionChip name="mira" />
+                          {' 的内容样板和 '}
+                          <MentionChip name="aeolus" />
+                          {' 的指标基线给出推荐：'}
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={120}>
+                          <ProposalPackCard
+                            defaultPick="综合推荐包"
+                            onConfirm={confirmProposalPack}
+                          />
+                        </RevealAfter>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {proposalAtOrPast('pack-ready') && proposalPack && (
+              <UserEchoBubble
+                title={`已选「${proposalPack}」`}
+                fields={(() => {
+                  const p = getPackProfile(proposalPack)
+                  return [
+                    {
+                      label: '关键指标',
+                      value: `A3 ${p.metrics.a3} · 自然 ${p.metrics.natural} · 看后搜 ${p.metrics.afterSearch}`,
+                    },
+                    { label: '预算', value: p.metrics.budget },
+                  ]
+                })()}
+              />
+            )}
+            {proposalAtOrPast('pack-ready') && (
+              <div
+                data-proposal-anchor="pack-ready"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('pack-ready') && proposalPack && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          {'已确认 '}
+                          <strong>{proposalPack}</strong>
+                          {'，达人结构 + 指标预估已沉淀：'}
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={120} onDone={next}>
+                          <ArtifactCard
+                            filename="达人包.md"
+                            summary={PROPOSAL_FILE_SUMMARY['达人包.md']}
+                            onOpen={() => openFileInTab('达人包.md')}
+                          />
+                        </RevealAfter>
+                      )}
+                      {step >= 3 && (
+                        <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                          <Stream
+                            cursor={false}
+                            onDone={() => setStep3ClosingBubbleStreamed(true)}
+                          >
+                            {'下一步进入 '}
+                            <strong>玩法 + Brief 编排</strong>
+                            {'：为每个达人桶绑定玩法标签，并产出 brief 模板（'}
+                            <MentionChip name="mira" />
+                            {' / '}
+                            <MentionChip name="aeolus" />
+                            {' 协同）。'}
+                          </Stream>
+                        </p>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 4 — 玩法 + Brief (selector while brief still pending) ── */}
+            {proposalAtOrPast('pack-ready') && <div id="proposal-step-4" className="h-0" aria-hidden />}
+            {proposalStep === 'pack-ready' && step3ClosingBubbleStreamed && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          按达人桶我配了 4 套玩法 + Brief 模板，可以切换查看；确认后会沉淀成统一的 brief 模板下发。
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={120}>
+                          <ProposalBriefCard onConfirm={confirmProposalBrief} />
+                        </RevealAfter>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {proposalAtOrPast('brief-ready') && (
+              <UserEchoBubble
+                title="已确认 4 套玩法 + Brief 模板"
+                fields={[
+                  {
+                    label: '玩法',
+                    value: '本地垂类 / 头部品宣 / 素人挑战 / 可投广候选',
+                  },
+                  { label: '产物', value: 'briefs/玩法brief.md' },
+                ]}
+              />
+            )}
+            {proposalAtOrPast('brief-ready') && (
+              <div
+                data-proposal-anchor="brief-ready"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('brief-ready') && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (
+                    <>
+                      <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                        <Stream onDone={next}>
+                          4 套玩法 brief 已固化，机构和达人侧拿这一份就能开干：
+                        </Stream>
+                      </p>
+                      {step >= 2 && (
+                        <RevealAfter delay={120} onDone={next}>
+                          <ArtifactCard
+                            filename="玩法brief.md"
+                            summary={PROPOSAL_FILE_SUMMARY['玩法brief.md']}
+                            onOpen={() => openFileInTab('玩法brief.md')}
+                          />
+                        </RevealAfter>
+                      )}
+                      {step >= 3 && (
+                        <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                          <Stream onDone={next}>
+                            {'接下来我会把目标 / 诊断 / 达人包 / Brief 拼装成完整的 '}
+                            <strong>提案报告</strong>
+                            {'，并由 '}
+                            <MentionChip name="aime" />
+                            {' 走质量检查。'}
+                          </Stream>
+                        </p>
+                      )}
+                      {step >= 4 && proposalStep === 'brief-ready' && (
+                        <RevealAfter delay={120}>
+                          <button
+                            type="button"
+                            onClick={assembleProposalReport}
+                            className="rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90"
+                          >
+                            生成提案报告
+                          </button>
+                        </RevealAfter>
+                      )}
+                    </>
+                  )}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 5 — 提案报告 ── */}
+            {proposalAtOrPast('report-ready') && (
+              <div
+                id="proposal-step-5"
+                data-proposal-anchor="report-ready"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('report-ready') && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (<>
+                <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                  <Stream onDone={next}>
+                    {'提案报告已拼装完成，'}
+                    <MentionChip name="aime" />
+                    {' 跑了一轮质量检查（目标清晰度 92 / 达人包完整度 88 / 预算合理性 76 / 自然贡献风险 中）。'}
+                  </Stream>
+                </p>
+                {step >= 2 && (
+                <RevealAfter delay={150} onDone={next}>
+                <div className="rounded-xl bg-[var(--chat-form-bg)] p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-medium text-[var(--color-ink)]">
+                      {proposalGoal?.brand ?? '本次提案'}｜五一潜客种草方案
+                    </span>
+                    <FileChip
+                      filename="提案报告.md"
+                      onOpen={() => openFileInTab('提案报告.md')}
+                    />
+                  </div>
+                  <div className="text-[11.5px] text-[var(--color-ink)]/55">
+                    方案版本 V2 ｜ {proposalPack ?? '综合推荐包'} ｜ 预算 ¥50 万 ｜ 含 7 个章节
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                    <ReportQualityRow label="目标清晰度" score="92" tone="mint" />
+                    <ReportQualityRow label="达人包完整度" score="88" tone="mint" />
+                    <ReportQualityRow label="预算合理性" score="76" tone="amber" />
+                    <ReportQualityRow label="自然贡献风险" score="中" tone="amber" />
+                  </div>
+                  <div className="rounded-md bg-[var(--color-surface-0)] px-2.5 py-1.5 text-[11.5px] leading-[1.65] text-[var(--color-ink)]/65">
+                    <strong className="text-[var(--color-ink)]">AI 修改建议：</strong>
+                    建议在提案里补充"内容自然贡献占比"作为商家复盘口径，并解释为什么不建议过度增加头部达人预算。
+                  </div>
+                </div>
+                </RevealAfter>
+                )}
+                {step >= 3 && (
+                <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                  <Stream onDone={next}>
+                    {'下一步把方案'}
+                    <strong>转执行看板</strong>
+                    {'，自动拆成达人 / 机构 / 星图任务。'}
+                  </Stream>
+                </p>
+                )}
+                {step >= 4 && proposalStep === 'report-ready' && (
+                  <RevealAfter delay={120}>
+                  <button
+                    type="button"
+                    onClick={convertProposalToDashboard}
+                    className="rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90"
+                  >
+                    提案转执行看板
+                  </button>
+                  </RevealAfter>
+                )}
+                  </>)}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 6 — 转执行看板 ── */}
+            {proposalAtOrPast('dashboard-ready') && (
+              <div
+                id="proposal-step-6"
+                data-proposal-anchor="dashboard-ready"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('dashboard-ready') && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (<>
+                <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                  <Stream onDone={next}>
+                    {'方案已拆成执行任务：6 阶段漏斗 + 5 个执行模块（达人 / 机构 / 内容任务 / 星图 / 内容质检），'}
+                    <MentionChip name="aime" />
+                    {' 把每个模块都同步到了对应负责人的飞书。'}
+                  </Stream>
+                </p>
+                {step >= 2 && (
+                <RevealAfter delay={150} onDone={next}>
+                  <ProposalDashboardCard />
+                </RevealAfter>
+                )}
+                {step >= 3 && (
+                <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                  <Stream onDone={next}>
+                    完整看板已沉淀，每日 AI 会同步进度日报：
+                  </Stream>
+                </p>
+                )}
+                {step >= 4 && (
+                <RevealAfter delay={120} onDone={next}>
+                  <ArtifactCard
+                    filename="执行看板.md"
+                    summary={PROPOSAL_FILE_SUMMARY['执行看板.md']}
+                    onOpen={() => openFileInTab('执行看板.md')}
+                  />
+                </RevealAfter>
+                )}
+                {step >= 6 && (
+                <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/55">
+                  <Stream onDone={next}>
+                    {'执行结束（5/05 后）会自动跑'}
+                    <strong>种草复盘</strong>
+                    {'，根据实际数据生成下次模板。'}
+                  </Stream>
+                </p>
+                )}
+                {step >= 7 && proposalStep === 'dashboard-ready' && (
+                  <RevealAfter delay={120}>
+                  <button
+                    type="button"
+                    onClick={runProposalReview}
+                    className="rounded-lg bg-[var(--color-ink)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-[0_4px_12px_-4px_rgba(16,18,24,0.25)] transition-opacity hover:opacity-90"
+                  >
+                    模拟执行结束 · 运行复盘
+                  </button>
+                  </RevealAfter>
+                )}
+                  </>)}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Step 7 — 种草复盘 (终态) ── */}
+            {proposalAtOrPast('review-ready') && (
+              <div
+                id="proposal-step-7"
+                data-proposal-anchor="review-ready"
+                className="h-0"
+                aria-hidden
+              />
+            )}
+            {proposalAtOrPast('review-ready') && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <Sequential>
+                  {(step, next) => (<>
+                <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                  <Stream onDone={next}>
+                    {'执行已收口。'}
+                    <MentionChip name="风神" />
+                    {' 拉了实际指标，'}
+                    <MentionChip name="iDA" />
+                    {' 跑了归因，'}
+                    <MentionChip name="aime" />
+                    {' 出复盘草稿：'}
+                  </Stream>
+                </p>
+                {step >= 2 && (
+                <RevealAfter delay={150} onDone={next}>
+                  <ProposalReviewCard />
+                </RevealAfter>
+                )}
+                {step >= 3 && (
+                <p className="text-[13px] leading-[1.7] text-[var(--color-ink)]/65">
+                  <Stream onDone={next}>
+                    全部产出已沉淀，可作为同类项目的起点模板。本次提案到这里就完成了 ✨
+                  </Stream>
+                </p>
+                )}
+                {step >= 4 && (
+                <RevealAfter delay={120} onDone={next}>
+                  <ArtifactCard
+                    filename="复盘.md"
+                    summary={PROPOSAL_FILE_SUMMARY['复盘.md']}
+                    onOpen={() => openFileInTab('复盘.md')}
+                  />
+                </RevealAfter>
+                )}
+                {step >= 5 && (
+                <p className="text-[12.5px] leading-[1.7] text-[var(--color-ink)]/45">
+                  <Stream cursor={false}>
+                    右侧「会话产出」面板列出了完整 7 份产物，随时可以打开复盘、回看、二次编辑。
+                  </Stream>
+                </p>
+                )}
+                  </>)}
+                </Sequential>
+              </motion.div>
+            )}
+
+            {/* ── Trigger-config flow — recognition → confirmation card →
+                 post-confirm success summary. Rendered once globally
+                 (not per-message) so only the latest trigger is in play. ── */}
+            {pendingTrigger && triggerStep === 'loading' && (
+              <motion.div
+                initial={{ opacity: 1 }}
+                animate={{ opacity: 0 }}
+                transition={{ delay: 0.4, duration: 0.25 }}
+                className="flex items-center gap-1.5 text-[12px] text-[var(--color-ink)]/45"
+              >
+                {[0, 1, 2].map((k) => (
+                  <motion.span
+                    key={k}
+                    animate={{ y: [0, -3, 0], opacity: [0.35, 0.85, 0.35] }}
+                    transition={{ duration: 0.9, delay: k * 0.15, repeat: Infinity, ease: 'easeInOut' }}
+                    className="h-1.5 w-1.5 rounded-full bg-[var(--color-ink)]"
+                  />
+                ))}
+                <span className="ml-1">AI 正在识别触发器…</span>
+              </motion.div>
+            )}
+            {pendingTrigger && triggerStep === 'ready' && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2.5"
+              >
+                <p className="text-[14px] leading-[20px] text-[var(--color-ink)]">
+                  识别到一个触发器，请确认：
+                </p>
+                <ChatFormCard delay={0.05}>
+                  <ChatFormStep number={1} title="事件">
+                    <span className="inline-flex items-center rounded-md bg-[var(--chat-form-option-bg)] px-2 py-0.5 text-[13px] font-medium text-[var(--color-ink)]">
+                      {pendingTrigger.event.label}
+                    </span>
+                  </ChatFormStep>
+                  <ChatFormStep number={2} title="执行动作">
+                    <p className="text-[13px] leading-[1.6] text-[var(--color-ink)]/85">
+                      {pendingTrigger.action.description}
+                    </p>
+                  </ChatFormStep>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <ChatFormSubmit onClick={confirmPendingTrigger}>
+                      确认创建
+                    </ChatFormSubmit>
+                    <button
+                      type="button"
+                      onClick={cancelPendingTrigger}
+                      className="rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--color-ink)]/55 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/85"
+                    >
+                      修改
+                    </button>
+                  </div>
+                </ChatFormCard>
+              </motion.div>
+            )}
+            {triggerStep === 'confirmed' && lastConfirmedTrigger && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2"
+              >
+                <div className="flex items-center gap-1.5 text-[12px] text-[var(--color-ink)]/50">
+                  <CheckCircle2 size={14} className="text-emerald-400" />
+                  <span>已创建触发器</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openTriggerTab(lastConfirmedTrigger)}
+                  className="flex w-full items-center justify-between rounded-xl bg-[var(--fill-subtle)] px-3.5 py-3 text-left text-[13px] transition-colors hover:bg-[var(--fill-hover)]"
+                >
+                  <span className="flex flex-col gap-0.5">
+                    <span className="font-medium text-[var(--color-ink)]">
+                      {lastConfirmedTrigger.name}
+                    </span>
+                    <span className="text-[11.5px] text-[var(--color-ink)]/55">
+                      {lastConfirmedTrigger.event.label} · {lastConfirmedTrigger.action.description}
+                    </span>
+                  </span>
+                  <ChevronRight size={14} className="text-[var(--color-ink)]/30" />
+                </button>
+              </motion.div>
+            )}
 
             {needsFlowActive && (<>
 
@@ -3466,8 +5736,26 @@ export default function VibeCodingPage() {
                 32px input default, action row of pill buttons. Outer
                 wrapper has mx-2.5 so the composer aligns with the
                 message area (8px chat inner px + 10px composer mx matches
-                the messages' px-2.5). ── */}
+                the messages' px-2.5). When an inline proposal form is
+                awaiting submission, the composer is swapped with a focus
+                hint bar so the user has only one input target. ── */}
           <div className="mx-2.5 flex-shrink-0">
+            {proposalFormPendingLabel ? (
+              <div className="flex items-center gap-2 rounded-full bg-[var(--fill-subtle)] px-4 py-2 ring-1 ring-[var(--divider-soft)]">
+                <FileText
+                  size={12}
+                  strokeWidth={1.8}
+                  className="shrink-0 text-[var(--color-ink)]/55"
+                />
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--color-ink)]/65">
+                  正在补充「
+                  <span className="font-medium text-[var(--color-ink)]">
+                    {proposalFormPendingLabel}
+                  </span>
+                  」表单 — 完成后 AI 继续推进
+                </span>
+              </div>
+            ) : (
             <div className="relative flex flex-col gap-4 overflow-hidden rounded-[24px] bg-[var(--color-surface-0)] p-3 shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_10px_15px_-5px_rgba(0,0,0,0.05)]">
               {/* Top rainbow-tint blur decoration */}
               <div
@@ -3482,19 +5770,51 @@ export default function VibeCodingPage() {
               {/* Input area — default 32px tall, grows with content up
                   to ~160px (8 lines) then scrolls internally. */}
               <div className="relative flex min-h-[32px] items-center pl-2">
-                <textarea
+                <div
                   ref={chatInputRef}
-                  value={chatDraft}
-                  onChange={(e) => setChatDraft(e.target.value)}
+                  contentEditable="plaintext-only"
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline
+                  data-placeholder="请输入，@ 引用资源"
+                  onInput={(e) => {
+                    const el = e.currentTarget as HTMLDivElement
+                    const val = el.innerText
+                    setChatDraft(val)
+                    // Detect "@" at the caret — check the character
+                    // before the caret's position in the active text node.
+                    const sel = window.getSelection()
+                    if (!sel || sel.rangeCount === 0) return
+                    const node = sel.focusNode
+                    const offset = sel.focusOffset
+                    if (node && node.nodeType === Node.TEXT_NODE && offset > 0) {
+                      const char = (node.textContent ?? '')[offset - 1]
+                      if (char === '@') {
+                        openMentionPicker()
+                        return
+                      }
+                    }
+                    // Close the picker if the most-recent '@' in the
+                    // draft is no longer a valid mention prefix (e.g.
+                    // whitespace slipped in).
+                    if (mentionAnchor) {
+                      const lastAt = val.lastIndexOf('@')
+                      if (lastAt < 0 || /\s/.test(val.slice(lastAt))) {
+                        setMentionAnchor(null)
+                      }
+                    }
+                  }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Escape' && mentionAnchor) {
+                      setMentionAnchor(null)
+                      return
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey && !mentionAnchor) {
                       e.preventDefault()
                       sendChat()
                     }
                   }}
-                  placeholder="请输入"
-                  rows={1}
-                  className="thin-scroll block max-h-[160px] min-h-0 w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-[20px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink)]/35"
+                  className="chat-editable thin-scroll block max-h-[160px] min-h-0 w-full overflow-y-auto bg-transparent text-[14px] leading-[20px] text-[var(--color-ink)] outline-none"
                 />
               </div>
 
@@ -3503,9 +5823,10 @@ export default function VibeCodingPage() {
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
+                    onClick={openResourceLibraryPage}
                     className="flex h-8 items-center gap-1 rounded-full border border-[var(--divider)] px-3 text-[13px] font-medium text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
                   >
-                    <FolderCode size={14} strokeWidth={1.8} />
+                    <Library size={14} strokeWidth={1.8} />
                     资源
                   </button>
                   <button
@@ -3542,9 +5863,24 @@ export default function VibeCodingPage() {
                 </div>
               </div>
             </div>
+            )}
           </div>
           </div>
           </div>
+          {/* @mention picker — fixed positioning lets it escape the chat
+               column stacking, anchored to the composer via anchor rect. */}
+          <MentionPicker
+            open={!!mentionAnchor}
+            anchor={mentionAnchor}
+            skills={mentionSkills}
+            tools={mentionTools}
+            files={mentionFiles}
+            triggers={mentionTriggers}
+            resources={mentionResources}
+            onInsert={insertMention}
+            onClose={() => setMentionAnchor(null)}
+            onOpenResourceLibrary={openResourceLibraryPage}
+          />
           {/* Right-edge drag handle — only in platform layout for now. Sits
                straddling the chat/preview boundary with a 4px touch area. */}
           {isPlatform && (
@@ -3602,13 +5938,17 @@ export default function VibeCodingPage() {
                   }}
                 />
                 <div className="relative z-10 flex min-h-0 w-full flex-1">
-                  <PhoneMockup>
-                    {activeFilter === 'ai-avatar' ? (
-                      <ChatPreview worldOverride="identity-v" />
-                    ) : (
-                      <MiniAppPreview key={miniAppKey} />
-                    )}
-                  </PhoneMockup>
+                  {!activeProjectHasTree ? (
+                    emptyProjectPreview
+                  ) : (
+                    <PhoneMockup>
+                      {activeFilter === 'ai-avatar' ? (
+                        <ChatPreview worldOverride="identity-v" />
+                      ) : (
+                        activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
+                      )}
+                    </PhoneMockup>
+                  )}
                 </div>
               </div>
               {/* Actions below the phone */}
@@ -3633,6 +5973,11 @@ export default function VibeCodingPage() {
                   </button>
                 ))}
               </div>
+              {triggerSimBar && (
+                <div className="mt-2 flex w-full shrink-0 justify-center">
+                  {triggerSimBar}
+                </div>
+              )}
             </div>
 
             {/* Drag handle to resize the preview column */}
@@ -3940,13 +6285,17 @@ export default function VibeCodingPage() {
               {/* Phone mockup — no ambient glow in code layout */}
               <div className="relative mt-5 flex min-h-0 w-full flex-1 items-center justify-center">
                 <div className="relative z-10 flex min-h-0 w-full flex-1">
-                  <PhoneMockup>
-                    {activeFilter === 'ai-avatar' ? (
-                      <ChatPreview worldOverride="identity-v" />
-                    ) : (
-                      <MiniAppPreview key={miniAppKey} />
-                    )}
-                  </PhoneMockup>
+                  {!activeProjectHasTree ? (
+                    emptyProjectPreview
+                  ) : (
+                    <PhoneMockup>
+                      {activeFilter === 'ai-avatar' ? (
+                        <ChatPreview worldOverride="identity-v" />
+                      ) : (
+                        activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
+                      )}
+                    </PhoneMockup>
+                  )}
                 </div>
               </div>
 
@@ -3970,6 +6319,11 @@ export default function VibeCodingPage() {
                   </button>
                 ))}
               </div>
+              {triggerSimBar && (
+                <div className="mt-2 flex w-full shrink-0 justify-center">
+                  {triggerSimBar}
+                </div>
+              )}
             </div>
             </div>
           </div>
@@ -3983,7 +6337,65 @@ export default function VibeCodingPage() {
           />
         )}
 
-        {(layout === 'workspace' || (isPlatform && !platformHomeOpen)) && (<>
+        {isPlatform && platformResourceLibraryOpen && (
+          <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
+            <ResourceLibraryView
+              selectedPrimary={resourceLibraryPrimary}
+              selectedSecondary={resourceLibrarySecondary}
+              selectedCapability={resourceLibraryCapability}
+              expandedPrimary={resourceLibraryExpanded}
+              searchQuery={resourceLibrarySearch}
+              typeFilter={resourceLibraryTypeFilter}
+              onTogglePrimary={toggleResourceLibraryExpanded}
+              onSelectCategory={(p, s) => {
+                setResourceLibraryPrimary(p)
+                setResourceLibrarySecondary(s)
+                setResourceLibraryCapability(null)
+              }}
+              onSelectCapability={setResourceLibraryCapability}
+              onSearchChange={setResourceLibrarySearch}
+              onTypeFilterChange={setResourceLibraryTypeFilter}
+              onUseCapabilityInChat={useCapabilityInChat}
+              onOpenProject={(name) => {
+                setProjectTitle(name)
+                handleNewSession()
+                setPlatformHomeOpen(false)
+                setPlatformResourceLibraryOpen(false)
+                setResourceLibraryCapability(null)
+                setPlatformSkillsOpen(false)
+                setPlatformCreativeSquareOpen(false)
+                setActivePreviewTab(0)
+              }}
+            />
+          </div>
+        )}
+
+        {isPlatform && platformSkillsOpen && (
+          <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
+            <PlatformPlaceholderView
+              icon={FolderCode}
+              title="Skills"
+              description="个人 Skill 工作台 — 在这里管理你创建的能力，发布到资源库供团队复用。"
+            />
+          </div>
+        )}
+
+        {isPlatform && platformCreativeSquareOpen && (
+          <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
+            <PlatformPlaceholderView
+              icon={Home}
+              title="创意广场"
+              description="看看其他业务方在 VibeCoding 里搭了什么 — 复刻热门项目，碰撞新的灵感。"
+            />
+          </div>
+        )}
+
+        {(layout === 'workspace' ||
+          (isPlatform && !platformHomeOpen && !platformSecondaryPageOpen)) &&
+          // Artifact-shape projects start with no tabs and no synthetic
+          // 产物总览 — hide the right preview entirely until at least one
+          // artefact has been generated.
+          !(activeOutputShape === 'artifact' && openTabs.length === 0) && (<>
 
         {/* ────── Right: Preview Panel. Platform lives inside a shared
              card (painted by the fixed card frame). The preview occupies
@@ -4009,8 +6421,8 @@ export default function VibeCodingPage() {
                     : 'text-[var(--color-ink)]/35 hover:bg-[var(--color-ink)]/[0.03] hover:text-[var(--color-ink)]/55 [&:hover:has(.pin-trigger:hover)]:bg-transparent'
                 }`}
               >
-                {tab.label}
-                {!tab.closable && (
+                {!tab.closable && tab.label === '产物预览' ? productTabLabel : tab.label}
+                {!tab.closable && tab.label === '产物预览' && (
                   <span
                     ref={pinTriggerRef}
                     role="button"
@@ -4133,18 +6545,37 @@ export default function VibeCodingPage() {
                       backgroundSize: '16px 16px',
                     }}
                   />
-                  <div className="relative z-10 flex min-h-0 flex-1">
-                    <PhoneMockup>
-                      {activeFilter === 'ai-avatar' ? (
-                        <ChatPreview worldOverride="identity-v" />
+                  <div className="relative z-10 flex min-h-0 flex-1 flex-col">
+                    <div className="flex min-h-0 flex-1">
+                      {!activeProjectHasTree ? (
+                        emptyProjectPreview
                       ) : (
-                        <MiniAppPreview key={miniAppKey} />
+                        <PhoneMockup>
+                          {activeFilter === 'ai-avatar' ? (
+                            <ChatPreview worldOverride="identity-v" />
+                          ) : (
+                            activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
+                          )}
+                        </PhoneMockup>
                       )}
-                    </PhoneMockup>
+                    </div>
+                    {triggerSimBar && (
+                      <div className="mt-2 flex w-full shrink-0 justify-center">
+                        {triggerSimBar}
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
             )
+
+            // Right-side preview dispatcher. Artifact-shape projects
+            // don't have a dedicated 产物总览 view — each generated artefact
+            // becomes its own non-closable tab via the proposalDocs effect,
+            // and the right pane is hidden entirely until at least one
+            // exists. So the dispatcher just falls back to the phone view
+            // for non-artifact shapes.
+            const productView = phoneView
 
             const diffAddText = themeMode === 'light' ? 'text-emerald-700' : 'text-emerald-200'
             const diffRemoveText = themeMode === 'light' ? 'text-red-700' : 'text-red-200'
@@ -4268,8 +6699,40 @@ export default function VibeCodingPage() {
               </div>
             )
 
-            const renderTab = (label: string) =>
-              label === DIFF_TAB_LABEL ? diffView : codeView(label)
+            const renderTab = (label: string) => {
+              if (label === DIFF_TAB_LABEL) return diffView
+              const trigger = triggers.find((t) => triggerTabLabel(t) === label)
+              if (trigger) {
+                return (
+                  <TriggerDetailView
+                    trigger={trigger}
+                    editingName={editingTriggerNameId === trigger.id}
+                    onStartEditName={() => setEditingTriggerNameId(trigger.id)}
+                    onStopEditName={() => setEditingTriggerNameId(null)}
+                    onRename={renameTrigger}
+                    onDelete={deleteTrigger}
+                  />
+                )
+              }
+              // Proposal-flow visual dashboards: render the rich BI view
+              // instead of a markdown doc.
+              if (label === '人群诊断看板' && label in proposalDocs) {
+                return <ProposalAudienceDashboard />
+              }
+              // Proposal-flow markdown artefacts: render via MarkdownView
+              // so the file reads as a real document rather than tokenized
+              // source code.
+              if (label.endsWith('.md') && proposalDocs[label]) {
+                return (
+                  <div className="thin-scroll flex min-h-0 flex-1 flex-col overflow-y-auto bg-[var(--color-surface-0)]">
+                    <div className="mx-auto flex w-full max-w-[760px] flex-col px-8 py-8">
+                      <MarkdownView source={proposalDocs[label]} />
+                    </div>
+                  </div>
+                )
+              }
+              return codeView(label)
+            }
 
             if (productPinned) {
               const codeLabel =
@@ -4283,7 +6746,7 @@ export default function VibeCodingPage() {
               const leftPercent = splitRatio * 100
               const productCol = (
                 <div className="flex min-w-0 flex-col overflow-hidden" style={{ width: `${leftIsProduct ? leftPercent : 100 - leftPercent}%` }}>
-                  {phoneView}
+                  {productView}
                 </div>
               )
               const codeCol = (
@@ -4316,9 +6779,17 @@ export default function VibeCodingPage() {
               )
             }
 
-            return activePreviewTab === 0
-              ? phoneView
-              : renderTab(openTabs[activePreviewTab].label)
+            // Dispatch by the active tab's label. The synthetic 产物预览
+            // tab still falls through to productView (phone/AI-avatar);
+            // every other tab — code files, MD artefacts, dashboards —
+            // routes through renderTab, which knows how to render each
+            // kind from its filename.
+            const activeLabel = openTabs[activePreviewTab]?.label
+            return activeLabel === '产物预览'
+              ? productView
+              : activeLabel
+                ? renderTab(activeLabel)
+                : null
           })()}
 
           {/* ── Console panel ── */}
@@ -4617,7 +7088,24 @@ const CHAT_EMPTY_SUGGESTIONS = [
   '再写两个塔罗牌面',
 ]
 
-function ChatEmptyState({ onPick }: { onPick: (text: string) => void }) {
+/** AI-avatar project suggestions — each phrase matches the trigger
+ *  pattern-match in `sendChat` so clicking one immediately kicks off
+ *  the recognition flow. */
+const AI_AVATAR_CHAT_SUGGESTIONS = [
+  '当用户关注时发送"欢迎关注"',
+  '用户评论后回复"谢谢留言"',
+  '用户点赞后发送"感谢点赞"',
+  '用户送礼物时答谢"感谢礼物"',
+  '用户投稿时推荐"新作品上线"',
+]
+
+function ChatEmptyState({
+  suggestions,
+  onPick,
+}: {
+  suggestions: string[]
+  onPick: (text: string) => void
+}) {
   const themeMode = useThemeStore((s) => s.mode)
   const isLight = themeMode === 'light'
   return (
@@ -4660,7 +7148,7 @@ function ChatEmptyState({ onPick }: { onPick: (text: string) => void }) {
         </p>
       </div>
       <div className="relative z-10 flex flex-wrap items-center justify-center gap-2">
-        {CHAT_EMPTY_SUGGESTIONS.map((s, i) => (
+        {suggestions.map((s, i) => (
           <motion.button
             key={s}
             type="button"
