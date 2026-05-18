@@ -14,6 +14,7 @@ import {
 import PublishFlowModal from '@/modules/editor/components/chat/PublishFlowModal'
 import { useThemeStore } from '@/shared/storage/theme'
 import MiniAppPreview from './MiniAppPreview'
+import WebAppPreview from './WebAppPreview'
 import AiPersonaChatPreview, { type TriggerSimulation } from './AiPersonaChatPreview'
 import MentionPicker, { type MentionItem } from './MentionPicker'
 import TriggerDetailView from './TriggerDetailView'
@@ -56,6 +57,24 @@ import {
   type PrimaryCategory,
   type Resource,
 } from './ResourceLibraryData'
+import {
+  buildAvatarProductView,
+  buildMiniProgramProductView,
+  buildProductView,
+  getProductPages,
+  PRODUCT_CATEGORY_ICONS,
+  WEB_PAGES,
+  type FileNode,
+  type ProjectKind,
+} from './ProjectProductView'
+import AvatarBasicInfoForm from './AvatarBasicInfoForm'
+import AvatarSystemPromptView from './AvatarSystemPromptView'
+import CapabilityDetailView from './CapabilityDetailView'
+import { getAvatarConfig } from './AvatarConfigData'
+import MiniProgramAgentView from './MiniProgramAgentView'
+import MiniProgramSettingsForm from './MiniProgramSettingsForm'
+import AssetGridView from './AssetGridView'
+import { getMiniProgramConfig } from './MiniProgramConfigData'
 
 /** Each platform project has a `ProjectKind` (the concrete product /
  *  case it represents) and an `OutputShape` (the abstract category that
@@ -73,7 +92,8 @@ import {
  *                 the code editor + diff (already supported by existing
  *                 code paths).
  */
-type ProjectKind = 'mini-program' | 'ai-avatar' | 'ops-proposal'
+// `ProjectKind` is defined in ./ProjectProductView (shared with the
+// product-view bucketing) and imported above.
 type OutputShape = 'app' | 'artifact' | 'code'
 
 const PROJECT_KINDS: Record<string, ProjectKind> = {
@@ -83,12 +103,14 @@ const PROJECT_KINDS: Record<string, ProjectKind> = {
   '粉丝互动机器人': 'ai-avatar',
   '陶白白 Sensei 分身': 'ai-avatar',
   '沪上火锅·五一种草提案': 'ops-proposal',
+  '个人作品集网站': 'web-app',
 }
 
 const SHAPE_BY_KIND: Record<ProjectKind, OutputShape> = {
   'mini-program': 'app',
   'ai-avatar': 'app',
   'ops-proposal': 'artifact',
+  'web-app': 'app',
 }
 
 /** Heuristic kind classifier — used when the home screen takes a free
@@ -188,6 +210,7 @@ import {
   AlertTriangle,
   MessageSquareWarning,
   Blocks,
+  BookOpen,
   Gift,
   PencilLine,
   Flag,
@@ -196,6 +219,7 @@ import {
   BriefcaseBusiness,
   Library,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 /* ─── Types ─── */
 interface RadioOption {
@@ -422,7 +446,7 @@ function RadioGroup({
 /*  VibeCodingPage                                        */
 /* ═══════════════════════════════════════════════════════ */
 /* ─── File Tree ─── */
-type FileNode = { name: string; type: 'file' | 'dir'; children?: FileNode[] }
+// `FileNode` is defined in ./ProjectProductView and imported above.
 
 /* ─── Trigger/action config (AI-avatar projects) ─── */
 type TriggerEventId =
@@ -974,6 +998,8 @@ function FileTreeView({
   depth,
   parentPath,
   railStartDepth = 0,
+  iconFor,
+  isActive,
 }: {
   nodes: FileNode[]
   expanded: Set<string>
@@ -985,6 +1011,14 @@ function FileTreeView({
    *  passes 1 so the outermost rail connecting files to the project
    *  header is suppressed. */
   railStartDepth?: number
+  /** Optional per-node icon override — the product view uses it to paint
+   *  synthetic category folders and page leaves with their own icon.
+   *  Returns undefined to fall back to the default folder / file icon.
+   *  Applies to both dir and file nodes. */
+  iconFor?: (node: FileNode, path: string, depth: number) => LucideIcon | undefined
+  /** Optional leaf-active predicate — the product view uses it to
+   *  highlight the page node matching the current preview route. */
+  isActive?: (node: FileNode, path: string) => boolean
 }) {
   // Each row carries `depth` absolutely-positioned rails — one per
   // ancestor level — so the user can trace a child back to its parent
@@ -1013,6 +1047,7 @@ function FileTreeView({
         const isExpanded = expanded.has(path)
         const pl = 12 + depth * 14
         if (node.type === 'dir') {
+          const DirIcon = iconFor?.(node, path, depth)
           return (
             <div key={path}>
               <div className="relative">
@@ -1022,7 +1057,13 @@ function FileTreeView({
                   className="flex w-full items-center gap-1.5 py-1 text-[12px] text-[var(--color-ink)]/75 transition-colors hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/95"
                   style={{ paddingLeft: pl }}
                 >
-                  {isExpanded ? <FolderOpen size={13} className="shrink-0 text-[var(--color-ink)]/60" /> : <FolderClosed size={13} className="shrink-0 text-[var(--color-ink)]/60" />}
+                  {DirIcon ? (
+                    <DirIcon size={13} className="shrink-0 text-[var(--color-ink)]/60" />
+                  ) : isExpanded ? (
+                    <FolderOpen size={13} className="shrink-0 text-[var(--color-ink)]/60" />
+                  ) : (
+                    <FolderClosed size={13} className="shrink-0 text-[var(--color-ink)]/60" />
+                  )}
                   {node.name}
                 </button>
               </div>
@@ -1035,21 +1076,31 @@ function FileTreeView({
                   depth={depth + 1}
                   parentPath={path}
                   railStartDepth={railStartDepth}
+                  iconFor={iconFor}
+                  isActive={isActive}
                 />
               )}
             </div>
           )
         }
-        const Icon = getFileIcon(node.name)
+        const Icon = iconFor?.(node, path, depth) ?? getFileIcon(node.name)
+        const active = isActive?.(node, path) ?? false
         return (
           <div key={path} className="relative">
             {renderRails()}
             <button
               onClick={() => onOpenFile(node.name)}
-              className="flex w-full items-center gap-1.5 py-1 text-[12px] text-[var(--color-ink)]/75 transition-colors hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/95"
+              className={`flex w-full items-center gap-1.5 py-1 text-[12px] transition-colors ${
+                active
+                  ? 'bg-[var(--color-ink)]/[0.07] text-[var(--color-ink)]'
+                  : 'text-[var(--color-ink)]/75 hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/95'
+              }`}
               style={{ paddingLeft: pl }}
             >
-              <Icon size={12} className="shrink-0 text-[var(--color-ink)]/55" />
+              <Icon
+                size={12}
+                className={`shrink-0 ${active ? 'text-[var(--color-ink)]/80' : 'text-[var(--color-ink)]/55'}`}
+              />
               {node.name}
             </button>
           </div>
@@ -1560,6 +1611,8 @@ function PlatformSidebar({
   onOpenSkills,
   onOpenCreativeSquare,
   activeNav,
+  activeRoute,
+  activeProjectName,
 }: {
   /** Per-project file trees. Projects missing from this map render the
    *  "暂无文件" empty state when expanded. */
@@ -1585,9 +1638,20 @@ function PlatformSidebar({
   onOpenCreativeSquare: () => void
   /** Which top-level nav is currently active — drives the highlight. */
   activeNav: 'Skills' | '资源库' | '创意广场' | null
+  /** Active preview page label — highlights the matching 页面 node in
+   *  the product view. null falls back to the default page (首页). */
+  activeRoute: string | null
+  /** Name of the currently-active project — page highlighting only
+   *  applies to that project's product view. */
+  activeProjectName: string
 }) {
   const [spaceMenuPos, setSpaceMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [activeSpace, setActiveSpace] = useState('个人空间')
+  // The project list is master/detail. The list shows every project's
+  // plain-language 产物视图; drilling into a project (`drilledProject`)
+  // swaps the panel for that one project's full file-view directory,
+  // with a 返回 back to the list.
+  const [drilledProject, setDrilledProject] = useState<string | null>(null)
   const spaceBtnRef = useRef<HTMLButtonElement>(null)
   const toggleProject = (name: string) =>
     setOpenProjects((prev) => {
@@ -1601,6 +1665,7 @@ function PlatformSidebar({
   const ALL_PROJECTS = [
     '每日打卡小程序',
     '第五人格塔罗小程序',
+    '个人作品集网站',
     '陶白白 Sensei 分身',
     '探店视频创作助手',
     '粉丝互动机器人',
@@ -1706,49 +1771,41 @@ function PlatformSidebar({
         })}
       </nav>
 
-      {/* 项目列表 header */}
-      <div className="mt-4 flex shrink-0 items-center justify-between px-5 py-1.5">
-        <span className="text-[12px] text-[var(--color-ink)]/55">项目列表</span>
-        <div className="flex items-center gap-1 text-[var(--color-ink)]/40">
-          <button
-            title="搜索全部项目文件"
-            className="flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/70"
-          >
-            <Search size={12} strokeWidth={1.8} />
-          </button>
-          <button
-            title="收起全部"
-            onClick={onCollapseAll}
-            className="flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/70"
-          >
-            <ListCollapse size={12} strokeWidth={1.8} />
-          </button>
-        </div>
-      </div>
-
-      {/* Project tree — projects with an entry in `projectTrees` expand
-           to a FileTreeView; the rest render a muted "暂无文件" stub. */}
-      <div className="thin-scroll flex-1 overflow-y-auto pb-2">
-        {ALL_PROJECTS.map((name) => {
-          const open = openProjects.has(name)
-          const tree = projectTrees[name]
-          return (
-            <div key={name}>
-              <button
-                onClick={() => {
-                  toggleProject(name)
-                  onSwitchProject(name)
-                }}
-                className="flex w-full items-center gap-1.5 py-1 pl-5 pr-3 text-[12px] font-medium text-[var(--color-ink)]/85 transition-colors hover:bg-[var(--color-ink)]/[0.04]"
-              >
-                {open ? (
-                  <ChevronDown size={12} className="shrink-0 text-[var(--color-ink)]/55" />
-                ) : (
-                  <ChevronRight size={12} className="shrink-0 text-[var(--color-ink)]/55" />
-                )}
-                <span className="truncate">{name}</span>
-              </button>
-              {open && tree && (
+      {drilledProject !== null ? (
+        /* ── Detail: one project's full file-view directory ── */
+        <>
+          <div className="mt-4 flex shrink-0 items-center gap-1 px-3 py-1.5">
+            <button
+              type="button"
+              onClick={() => setDrilledProject(null)}
+              title="返回项目列表"
+              className="flex h-6 shrink-0 items-center gap-0.5 rounded-md pl-1 pr-2 text-[12px] text-[var(--color-ink)]/60 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/85"
+            >
+              <ArrowLeft size={13} strokeWidth={1.8} />
+              返回
+            </button>
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[var(--color-ink)]/85">
+              {drilledProject}
+            </span>
+            <button
+              title="收起全部"
+              onClick={onCollapseAll}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--color-ink)]/40 hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/70"
+            >
+              <ListCollapse size={12} strokeWidth={1.8} />
+            </button>
+          </div>
+          <div className="thin-scroll flex-1 overflow-y-auto pb-2">
+            {(() => {
+              const tree = projectTrees[drilledProject]
+              if (!tree) {
+                return (
+                  <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
+                    暂无文件
+                  </div>
+                )
+              }
+              return (
                 <FileTreeView
                   nodes={tree}
                   expanded={expandedDirs}
@@ -1758,16 +1815,126 @@ function PlatformSidebar({
                   parentPath=""
                   railStartDepth={1}
                 />
-              )}
-              {open && !tree && (
-                <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
-                  暂无文件
-                </div>
-              )}
+              )
+            })()}
+          </div>
+        </>
+      ) : (
+        /* ── List: every project, inline 产物视图 ── */
+        <>
+          {/* 项目列表 header */}
+          <div className="mt-4 flex shrink-0 items-center justify-between px-5 py-1.5">
+            <span className="text-[12px] text-[var(--color-ink)]/55">项目列表</span>
+            <div className="flex items-center gap-1 text-[var(--color-ink)]/40">
+              <button
+                title="搜索全部项目文件"
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/70"
+              >
+                <Search size={12} strokeWidth={1.8} />
+              </button>
+              <button
+                title="收起全部"
+                onClick={onCollapseAll}
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/70"
+              >
+                <ListCollapse size={12} strokeWidth={1.8} />
+              </button>
             </div>
-          )
-        })}
-      </div>
+          </div>
+
+          {/* Project list — each project expands inline to its 产物视图;
+               the hover drill button opens its full file directory. */}
+          <div className="thin-scroll flex-1 overflow-y-auto pb-2">
+            {ALL_PROJECTS.map((name) => {
+              const open = openProjects.has(name)
+              const tree = projectTrees[name]
+              return (
+                <div key={name}>
+                  <div className="group flex items-center pr-5 transition-colors hover:bg-[var(--color-ink)]/[0.04]">
+                    <button
+                      onClick={() => {
+                        toggleProject(name)
+                        onSwitchProject(name)
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-5 pr-1 text-[12px] font-medium text-[var(--color-ink)]/85"
+                    >
+                      {open ? (
+                        <ChevronDown size={12} className="shrink-0 text-[var(--color-ink)]/55" />
+                      ) : (
+                        <ChevronRight size={12} className="shrink-0 text-[var(--color-ink)]/55" />
+                      )}
+                      <span className="truncate">{name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDrilledProject(name)}
+                      title="查看完整目录结构"
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--color-ink)]/40 opacity-0 transition-opacity hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/75 focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      <FolderCode size={12} strokeWidth={1.8} />
+                    </button>
+                  </div>
+                  {open && (() => {
+                    const emptyStub = (
+                      <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
+                        暂无文件
+                      </div>
+                    )
+                    if (!tree) return emptyStub
+                    const kind = PROJECT_KINDS[name] ?? 'mini-program'
+                    // AI 分身 and 小程序 projects are config-driven;
+                    // other kinds bucket the raw file tree.
+                    const productTree =
+                      kind === 'ai-avatar'
+                        ? buildAvatarProductView(tree, getAvatarConfig(name))
+                        : kind === 'mini-program'
+                          ? buildMiniProgramProductView(
+                              tree,
+                              getMiniProgramConfig(name),
+                            )
+                          : buildProductView(tree, kind)
+                    if (productTree.length === 0) return emptyStub
+                    return (
+                      // Extra left inset so a project's contents read as
+                      // nested under its project row.
+                      <div className="pl-2">
+                        <FileTreeView
+                          nodes={productTree}
+                          expanded={expandedDirs}
+                          onToggleDir={toggleDir}
+                          onOpenFile={openFileInTab}
+                          depth={1}
+                          // Distinct root so product-view expansion state
+                          // never collides with file-view paths.
+                          parentPath="__product__"
+                          railStartDepth={1}
+                          iconFor={(n, path) =>
+                            // Path-keyed leaves first: every 界面 page
+                            // shares the same page icon; 知识库 / 技能
+                            // items their own. Else fall to the name map.
+                            path.includes('/界面/')
+                              ? AppWindow
+                              : path.includes('/知识库/')
+                                ? BookOpen
+                                : path.includes('/技能/')
+                                  ? Sparkles
+                                  : PRODUCT_CATEGORY_ICONS[n.name]
+                          }
+                          isActive={
+                            name === activeProjectName
+                              ? (n) => n.name === (activeRoute ?? '首页')
+                              : undefined
+                          }
+                        />
+                      </div>
+                    )
+                  })()}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
 
       {/* User footer */}
       <div className="flex h-12 shrink-0 items-center gap-2 px-5">
@@ -2016,6 +2183,10 @@ export default function VibeCodingPage() {
   /* bump to remount the mini-app preview — clicking the phone-bar "重新加载"
    * fully resets its local interactive state. */
   const [miniAppKey, setMiniAppKey] = useState(0)
+  /** Active page of the right-side preview for app-like projects, driven
+   *  by the product view's 页面 nodes (and the preview's own nav). null =
+   *  the project's default first page. */
+  const [previewRoute, setPreviewRoute] = useState<string | null>(null)
 
   /* Layout plan — 'workspace' is the default (tabs 合一, 产物可钉左右);
    * 'editor' mirrors IP-编辑器: 左侧常驻手机 + 中间独立文件编辑;
@@ -2474,36 +2645,34 @@ export default function VibeCodingPage() {
     })
   }
 
-  /* File tree for the AI 分身 project — persona config + skills folders +
-   * knowledge base files. Stub content; opening these files just creates
-   * an empty tab since they aren't in codeFiles. */
+  /* File tree for the AI 分身 project — mirrors the real 个人数字分身 code
+   * structure: `.agent/skills/*` bind-avatar skill folders + an
+   * `avatar-agent/` folder holding the avatar config / verify-result /
+   * user-persona JSON. Stub content; opening these files just creates an
+   * empty tab since they aren't in codeFiles. */
   const aiPersonaFileTree: FileNode[] = [
-    { name: 'persona.yaml', type: 'file' },
-    { name: 'greeting.md', type: 'file' },
-    { name: 'voice-guide.md', type: 'file' },
     {
       name: '.agent',
       type: 'dir',
       children: [
-        { name: 'manifest.json', type: 'file' },
         {
           name: 'skills',
           type: 'dir',
           children: [
             {
-              name: 'astrology',
+              name: 'bind_avatar_component',
               type: 'dir',
               children: [
+                { name: 'douyin-ai-platform-manifest.json', type: 'file' },
                 { name: 'SKILL.md', type: 'file' },
-                { name: 'manifest.yaml', type: 'file' },
               ],
             },
             {
-              name: 'emotional-coach',
+              name: 'bind_avatar_skill',
               type: 'dir',
               children: [
+                { name: 'douyin-ai-platform-manifest.json', type: 'file' },
                 { name: 'SKILL.md', type: 'file' },
-                { name: 'manifest.yaml', type: 'file' },
               ],
             },
           ],
@@ -2511,12 +2680,12 @@ export default function VibeCodingPage() {
       ],
     },
     {
-      name: 'knowledge',
+      name: 'avatar-agent',
       type: 'dir',
       children: [
-        { name: 'zodiac.md', type: 'file' },
-        { name: 'relationships.md', type: 'file' },
-        { name: 'self-growth.md', type: 'file' },
+        { name: 'avatar_config.json', type: 'file' },
+        { name: 'avatar_verify_result.json', type: 'file' },
+        { name: 'douyin_user_persona.json', type: 'file' },
       ],
     },
     // triggers/ folder only appears once the user configures at least
@@ -2536,6 +2705,81 @@ export default function VibeCodingPage() {
       : []),
   ]
 
+  /* File tree for the 个人作品集网站 project — a generic React + Vite
+   * frontend site. Static structure: multi-page `src/pages`, components,
+   * hooks, lib, styles + `public/assets` for static images. Mirrors a
+   * mini-program structurally but is previewed in a browser frame. */
+  const webAppFileTree: FileNode[] = [
+    { name: 'index.html', type: 'file' },
+    { name: 'package.json', type: 'file' },
+    { name: 'vite.config.ts', type: 'file' },
+    { name: 'tsconfig.json', type: 'file' },
+    {
+      name: 'public',
+      type: 'dir',
+      children: [
+        {
+          name: 'assets',
+          type: 'dir',
+          children: [
+            { name: 'logo.svg', type: 'file' },
+            { name: 'hero.png', type: 'file' },
+            { name: 'avatar.png', type: 'file' },
+          ],
+        },
+      ],
+    },
+    {
+      name: 'src',
+      type: 'dir',
+      children: [
+        { name: 'main.tsx', type: 'file' },
+        { name: 'App.tsx', type: 'file' },
+        {
+          name: 'pages',
+          type: 'dir',
+          children: [
+            { name: 'Home', type: 'dir', children: [
+              { name: 'index.tsx', type: 'file' },
+              { name: 'index.module.css', type: 'file' },
+            ]},
+            { name: 'Works', type: 'dir', children: [
+              { name: 'index.tsx', type: 'file' },
+              { name: 'index.module.css', type: 'file' },
+            ]},
+            { name: 'About', type: 'dir', children: [
+              { name: 'index.tsx', type: 'file' },
+            ]},
+            { name: 'Contact', type: 'dir', children: [
+              { name: 'index.tsx', type: 'file' },
+            ]},
+          ],
+        },
+        {
+          name: 'components',
+          type: 'dir',
+          children: [
+            { name: 'Navbar.tsx', type: 'file' },
+            { name: 'Footer.tsx', type: 'file' },
+            { name: 'ProjectCard.tsx', type: 'file' },
+            { name: 'ThemeToggle.tsx', type: 'file' },
+          ],
+        },
+        { name: 'hooks', type: 'dir', children: [
+          { name: 'useTheme.ts', type: 'file' },
+          { name: 'useScrollSpy.ts', type: 'file' },
+        ]},
+        { name: 'lib', type: 'dir', children: [
+          { name: 'api.ts', type: 'file' },
+          { name: 'constants.ts', type: 'file' },
+        ]},
+        { name: 'styles', type: 'dir', children: [
+          { name: 'globals.css', type: 'file' },
+        ]},
+      ],
+    },
+  ]
+
   /* Which file tree belongs to each project. Projects not in this map
    * are treated as empty stubs ("暂无文件"). 沪上火锅 starts as a stub —
    * the proposal flow appends its generated artefacts (商家目标卡.md,
@@ -2544,6 +2788,7 @@ export default function VibeCodingPage() {
   const [projectTrees, setProjectTrees] = useState<Record<string, FileNode[]>>({
     '第五人格塔罗小程序': fileTree,
     '陶白白 Sensei 分身': aiPersonaFileTree,
+    '个人作品集网站': webAppFileTree,
     '沪上火锅·五一种草提案': [
       { name: 'briefs', type: 'dir', children: [] },
       { name: 'configs', type: 'dir', children: [] },
@@ -2592,7 +2837,62 @@ export default function VibeCodingPage() {
     ? `calc(${effectiveSidebarWidth}px + max(0px, (100vw - ${effectiveSidebarWidth}px - ${PREVIEW_HIDDEN_CHAT_MAX}px) / 2))`
     : effectiveSidebarWidth
 
+  /** Find-or-focus a tab by label, pushing a new closable tab when
+   *  absent. Used for AI-分身 structured tabs (基础信息 / 人设指令 /
+   *  知识·* / 技能·*). */
+  const openNamedTab = (label: string) => {
+    const existing = openTabs.findIndex((t) => t.label === label)
+    if (existing >= 0) {
+      setActivePreviewTab(existing)
+      return
+    }
+    const next = [...openTabs, { label, closable: true }]
+    setOpenTabs(next)
+    setActivePreviewTab(next.length - 1)
+  }
+
   const openFileInTab = (filename: string) => {
+    // Product-view 页面 nodes aren't files — clicking one navigates the
+    // right-side preview to that page and focuses the 产物预览 tab.
+    const activeTree = projectTrees[projectTitle]
+    if (activeTree && getProductPages(activeTree).some((p) => p.label === filename)) {
+      setPreviewRoute(filename)
+      const idx = openTabs.findIndex((t) => t.label === '产物预览')
+      setActivePreviewTab(idx >= 0 ? idx : 0)
+      return
+    }
+    // AI 分身 product-view sections open structured tabs (form / doc /
+    // capability detail) — never raw config files.
+    const avatarConfig = getAvatarConfig(projectTitle)
+    if (avatarConfig) {
+      if (filename === '基础信息' || filename === '人设指令') {
+        openNamedTab(filename)
+        return
+      }
+      if (avatarConfig.knowledgeInfoList.some((c) => c.name === filename)) {
+        openNamedTab(`知识·${filename}`)
+        return
+      }
+      if (
+        [...avatarConfig.skillInfoList, ...avatarConfig.toolInfoList].some(
+          (c) => c.name === filename,
+        )
+      ) {
+        openNamedTab(`技能·${filename}`)
+        return
+      }
+    }
+    // 小程序 product-view sections open structured tabs too.
+    const miniProgramConfig = getMiniProgramConfig(projectTitle)
+    if (
+      miniProgramConfig &&
+      (filename === '智能体' ||
+        filename === '小程序设置' ||
+        filename === '静态素材')
+    ) {
+      openNamedTab(filename)
+      return
+    }
     // Trigger files route to the structured detail view, not codeFiles.
     // Filename pattern: `${event.id}-${id.slice(-6)}.trigger.json`.
     if (filename.endsWith('.trigger.json')) {
@@ -3460,11 +3760,7 @@ export default function VibeCodingPage() {
    *  both live under 'app'). */
   const activeOutputShape: OutputShape = SHAPE_BY_KIND[activeProjectKind]
   const productTabLabel =
-    activeOutputShape === 'artifact'
-      ? '产物总览'
-      : activeProjectKind === 'ai-avatar'
-        ? 'AI 分身'
-        : '产物预览'
+    activeOutputShape === 'artifact' ? '产物总览' : '产物预览'
   /* True when the active project has actual scaffolded content — drives
    * whether the right-side preview renders the phone mock or an empty
    * state. Stub projects (no entry in `projectTrees`) get the empty
@@ -3521,6 +3817,53 @@ export default function VibeCodingPage() {
         </div>
       </div>
     ) : null
+
+  /* Browser-style address bar shown in the preview's top strip for
+   * web-app projects — it replaces the 小程序/AI分身/小花技能 mode tabs,
+   * which don't apply to a website. Keeps the web preview unified with
+   * the existing preview chrome instead of a bolted-on browser window. */
+  const addressBarPath =
+    WEB_PAGES.find((p) => p.label === (previewRoute ?? '首页'))?.path ?? ''
+  const addressBar = (
+    <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex h-7 min-w-0 max-w-[460px] flex-1 items-center rounded-lg bg-[var(--fill-subtle)] px-3 text-[12px] text-[var(--color-ink)]/50">
+        <span className="truncate">localhost:5173{addressBarPath}</span>
+      </div>
+    </div>
+  )
+
+  /* Right-side preview surface — picks the inner preview for the active
+   * project. web-app renders the site full-bleed (its address bar lives
+   * in the top strip); everything else keeps the phone frame. Stub
+   * projects (no tree) show the empty state. Shared by all three layout
+   * variants below. */
+  const previewSurface = !activeProjectHasTree ? (
+    emptyProjectPreview
+  ) : activeProjectKind === 'web-app' ? (
+    <div className="thin-scroll min-h-0 w-full flex-1 overflow-y-auto bg-white">
+      <WebAppPreview
+        key={miniAppKey}
+        route={previewRoute}
+        onNavigate={setPreviewRoute}
+      />
+    </div>
+  ) : activeFilter === 'ai-avatar' ? (
+    <PhoneMockup>
+      <ChatPreview worldOverride="identity-v" />
+    </PhoneMockup>
+  ) : activeProjectKind === 'ai-avatar' ? (
+    <PhoneMockup>
+      <AiPersonaChatPreview simulations={triggerSimulations} />
+    </PhoneMockup>
+  ) : (
+    <PhoneMockup>
+      <MiniAppPreview
+        key={miniAppKey}
+        route={previewRoute}
+        onNavigate={setPreviewRoute}
+      />
+    </PhoneMockup>
+  )
 
   /* Mention-picker data — derived every render so it stays in sync with
    * the active project's file tree + triggers. Skills stay static since
@@ -3673,11 +4016,17 @@ export default function VibeCodingPage() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const renameSession = (id: string, name: string) =>
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
-  const filters = [
-    { label: '小程序', value: 'mini-program' },
-    { label: 'AI分身', value: 'ai-avatar' },
-    { label: '小花技能', value: 'xiaohua' },
-  ]
+  // Preview-strip tabs. AI 分身 projects collapse to a single「AI分身」
+  // tab (value stays 'mini-program' so previewSurface keeps dispatching
+  // by activeProjectKind); other kinds keep the original three.
+  const filters =
+    activeProjectKind === 'ai-avatar'
+      ? [{ label: 'AI分身', value: 'mini-program' }]
+      : [
+          { label: '小程序', value: 'mini-program' },
+          { label: 'AI分身', value: 'ai-avatar' },
+          { label: '小花技能', value: 'xiaohua' },
+        ]
 
   /* console */
   const [consoleOpen, setConsoleOpen] = useState(false)
@@ -3768,6 +4117,10 @@ export default function VibeCodingPage() {
               setPlatformSkillsOpen(false)
               setPlatformCreativeSquareOpen(false)
               setActivePreviewTab(0)
+              // Reset the preview page + strip filter so neither leaks
+              // from the previous project into the newly opened one.
+              setPreviewRoute(null)
+              setActiveFilter('mini-program')
               // Proposal flow init: opening the 沪上火锅 case lands the
               // user on the goal-collection form. Other projects reset
               // the proposal state so a stale form doesn't leak across.
@@ -3795,6 +4148,12 @@ export default function VibeCodingPage() {
               } else {
                 setProposalStep('idle')
                 setProposalGoal(null)
+                // Re-seed the 产物预览 tab. Non-artifact projects always
+                // have it, but switching here FROM the proposal project
+                // (which empties openTabs) would otherwise leave openTabs
+                // empty → previewHidden → the right preview pane stays
+                // collapsed and the chat is stuck full-width.
+                setOpenTabs([{ label: '产物预览', closable: false }])
               }
             }}
             onCollapseAll={() => {
@@ -3814,6 +4173,8 @@ export default function VibeCodingPage() {
                     ? '创意广场'
                     : null
             }
+            activeRoute={previewRoute}
+            activeProjectName={projectTitle}
           />
           {/* Right-edge drag handle */}
           <div
@@ -5906,21 +6267,28 @@ export default function VibeCodingPage() {
               className="relative flex shrink-0 flex-col items-center px-6 pt-6 pb-8"
               style={{ width: previewColumnWidth }}
             >
-              {/* Segment control above phone (IP editor 样式) */}
-              <div className="flex shrink-0 items-center gap-6 pb-10">
-                {filters.map((f) => (
-                  <button
-                    key={f.value}
-                    onClick={() => setActiveFilter(f.value)}
-                    className={`relative text-[13px] font-medium tracking-wide transition-colors ${
-                      f.value === activeFilter
-                        ? 'text-[var(--color-ink)]'
-                        : 'text-[var(--color-ink)]/35 hover:text-[var(--color-ink)]/65'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                ))}
+              {/* Segment control above phone (IP editor 样式) — web-app
+                   projects swap it for a browser address bar. */}
+              <div
+                className={`flex shrink-0 items-center gap-6 pb-10 ${
+                  activeProjectKind === 'web-app' ? 'w-full' : ''
+                }`}
+              >
+                {activeProjectKind === 'web-app'
+                  ? addressBar
+                  : filters.map((f) => (
+                      <button
+                        key={f.value}
+                        onClick={() => setActiveFilter(f.value)}
+                        className={`relative text-[13px] font-medium tracking-wide transition-colors ${
+                          f.value === activeFilter
+                            ? 'text-[var(--color-ink)]'
+                            : 'text-[var(--color-ink)]/35 hover:text-[var(--color-ink)]/65'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
               </div>
               {/* Phone + ambient glow */}
               <div className="relative flex min-h-0 w-full flex-1 items-center justify-center">
@@ -5938,17 +6306,7 @@ export default function VibeCodingPage() {
                   }}
                 />
                 <div className="relative z-10 flex min-h-0 w-full flex-1">
-                  {!activeProjectHasTree ? (
-                    emptyProjectPreview
-                  ) : (
-                    <PhoneMockup>
-                      {activeFilter === 'ai-avatar' ? (
-                        <ChatPreview worldOverride="identity-v" />
-                      ) : (
-                        activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
-                      )}
-                    </PhoneMockup>
-                  )}
+                  {previewSurface}
                 </div>
               </div>
               {/* Actions below the phone */}
@@ -6262,40 +6620,35 @@ export default function VibeCodingPage() {
               className="relative flex shrink-0 flex-col items-center px-6 pt-4 pb-6"
               style={{ width: previewColumnWidth }}
             >
-              {/* Segment pill: 小程序 / 技能 */}
-              <div className="flex shrink-0 items-center rounded-full bg-[var(--fill-subtle)] p-1">
-                {filters.map((f) => {
-                  const active = f.value === activeFilter
-                  return (
-                    <button
-                      key={f.value}
-                      onClick={() => setActiveFilter(f.value)}
-                      className={`rounded-full px-4 py-1 text-[12px] font-medium tracking-wide transition-colors ${
-                        active
-                          ? 'bg-[var(--fill-strong)] text-[var(--color-ink)] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]'
-                          : 'text-[var(--color-ink)]/45 hover:text-[var(--color-ink)]/80'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  )
-                })}
-              </div>
+              {/* Segment pill: 小程序 / 技能 — web-app projects swap it
+                   for a browser address bar. */}
+              {activeProjectKind === 'web-app' ? (
+                <div className="flex w-full shrink-0">{addressBar}</div>
+              ) : (
+                <div className="flex shrink-0 items-center rounded-full bg-[var(--fill-subtle)] p-1">
+                  {filters.map((f) => {
+                    const active = f.value === activeFilter
+                    return (
+                      <button
+                        key={f.value}
+                        onClick={() => setActiveFilter(f.value)}
+                        className={`rounded-full px-4 py-1 text-[12px] font-medium tracking-wide transition-colors ${
+                          active
+                            ? 'bg-[var(--fill-strong)] text-[var(--color-ink)] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]'
+                            : 'text-[var(--color-ink)]/45 hover:text-[var(--color-ink)]/80'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
 
               {/* Phone mockup — no ambient glow in code layout */}
               <div className="relative mt-5 flex min-h-0 w-full flex-1 items-center justify-center">
                 <div className="relative z-10 flex min-h-0 w-full flex-1">
-                  {!activeProjectHasTree ? (
-                    emptyProjectPreview
-                  ) : (
-                    <PhoneMockup>
-                      {activeFilter === 'ai-avatar' ? (
-                        <ChatPreview worldOverride="identity-v" />
-                      ) : (
-                        activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
-                      )}
-                    </PhoneMockup>
-                  )}
+                  {previewSurface}
                 </div>
               </div>
 
@@ -6476,21 +6829,25 @@ export default function VibeCodingPage() {
               <>
                 {/* filter chips + action buttons */}
                 <div className="@container flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
-                  <div className="flex items-center gap-6">
-                    {filters.map((f) => (
-                      <button
-                        key={f.value}
-                        onClick={() => setActiveFilter(f.value)}
-                        className={`relative text-[13px] font-medium tracking-wide transition-colors ${
-                          f.value === activeFilter
-                            ? 'text-[var(--color-ink)]'
-                            : 'text-[var(--color-ink)]/35 hover:text-[var(--color-ink)]/65'
-                        }`}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
+                  {activeProjectKind === 'web-app' ? (
+                    addressBar
+                  ) : (
+                    <div className="flex items-center gap-6">
+                      {filters.map((f) => (
+                        <button
+                          key={f.value}
+                          onClick={() => setActiveFilter(f.value)}
+                          className={`relative text-[13px] font-medium tracking-wide transition-colors ${
+                            f.value === activeFilter
+                              ? 'text-[var(--color-ink)]'
+                              : 'text-[var(--color-ink)]/35 hover:text-[var(--color-ink)]/65'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-2">
                     {[
@@ -6519,8 +6876,12 @@ export default function VibeCodingPage() {
                      mode-only (in light mode it bloomed into pastel halos
                      that washed out the dot grid on either side of the
                      phone). Light mode keeps just the dot grid + phone. */}
-                <div className="relative flex min-h-0 flex-1 overflow-hidden pt-6 pb-12">
-                  {themeMode === 'dark' && (
+                <div
+                  className={`relative flex min-h-0 flex-1 overflow-hidden ${
+                    activeProjectKind === 'web-app' ? '' : 'pt-6 pb-12'
+                  }`}
+                >
+                  {themeMode === 'dark' && activeProjectKind !== 'web-app' && (
                     <div
                       aria-hidden
                       className="pointer-events-none absolute inset-0 z-0"
@@ -6535,29 +6896,22 @@ export default function VibeCodingPage() {
                       }}
                     />
                   )}
-                  {/* Dot grid — theme-aware via --color-ink-10 */}
-                  <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 z-[1]"
-                    style={{
-                      backgroundImage:
-                        'radial-gradient(circle at 1px 1px, var(--color-ink-10) 1px, transparent 1.5px)',
-                      backgroundSize: '16px 16px',
-                    }}
-                  />
+                  {/* Dot grid — theme-aware via --color-ink-10. Hidden for
+                       web-app: the site preview is full-bleed. */}
+                  {activeProjectKind !== 'web-app' && (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 z-[1]"
+                      style={{
+                        backgroundImage:
+                          'radial-gradient(circle at 1px 1px, var(--color-ink-10) 1px, transparent 1.5px)',
+                        backgroundSize: '16px 16px',
+                      }}
+                    />
+                  )}
                   <div className="relative z-10 flex min-h-0 flex-1 flex-col">
                     <div className="flex min-h-0 flex-1">
-                      {!activeProjectHasTree ? (
-                        emptyProjectPreview
-                      ) : (
-                        <PhoneMockup>
-                          {activeFilter === 'ai-avatar' ? (
-                            <ChatPreview worldOverride="identity-v" />
-                          ) : (
-                            activeProjectKind === 'ai-avatar' ? <AiPersonaChatPreview simulations={triggerSimulations} /> : <MiniAppPreview key={miniAppKey} />
-                          )}
-                        </PhoneMockup>
-                      )}
+                      {previewSurface}
                     </div>
                     {triggerSimBar && (
                       <div className="mt-2 flex w-full shrink-0 justify-center">
@@ -6730,6 +7084,63 @@ export default function VibeCodingPage() {
                     </div>
                   </div>
                 )
+              }
+              // AI 分身 product-view sections — config-driven structured
+              // tabs (basic-info form / persona-prompt doc / capability
+              // detail), opened from the avatar product view.
+              const avatarConfig = getAvatarConfig(projectTitle)
+              if (avatarConfig) {
+                if (label === '基础信息') {
+                  return <AvatarBasicInfoForm config={avatarConfig} />
+                }
+                if (label === '人设指令') {
+                  return (
+                    <AvatarSystemPromptView
+                      avatarName={avatarConfig.name}
+                      prompt={avatarConfig.systemPrompt}
+                    />
+                  )
+                }
+                if (label.startsWith('知识·') || label.startsWith('技能·')) {
+                  const isKnow = label.startsWith('知识·')
+                  const itemName = label.slice(3)
+                  const isTool =
+                    !isKnow &&
+                    avatarConfig.toolInfoList.some((t) => t.name === itemName)
+                  const capability: Capability = {
+                    type: isKnow ? 'knowledge' : isTool ? 'tool' : 'skill',
+                    name: itemName,
+                  }
+                  const platform: Resource = {
+                    id: `avatar-${avatarConfig.appID}`,
+                    name: avatarConfig.name,
+                    description: avatarConfig.description,
+                    primaryCategory: '空间',
+                    secondaryCategory: avatarConfig.name,
+                    capabilities: [],
+                  }
+                  return (
+                    <CapabilityDetailView
+                      capability={capability}
+                      platform={platform}
+                      embedded
+                    />
+                  )
+                }
+              }
+              // 小程序 product-view sections — config-driven structured
+              // tabs (agent / settings / asset grid).
+              const miniProgramConfig = getMiniProgramConfig(projectTitle)
+              if (miniProgramConfig) {
+                if (label === '智能体') {
+                  return <MiniProgramAgentView config={miniProgramConfig} />
+                }
+                if (label === '小程序设置') {
+                  return <MiniProgramSettingsForm config={miniProgramConfig} />
+                }
+                if (label === '静态素材') {
+                  return <AssetGridView assets={miniProgramConfig.assets} />
+                }
               }
               return codeView(label)
             }

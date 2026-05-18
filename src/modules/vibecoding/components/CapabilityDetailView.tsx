@@ -69,9 +69,13 @@ const TYPE_AMBIENT: Record<Capability['type'], string> = {
 interface CapabilityDetailViewProps {
   capability: Capability
   platform: Resource
-  onBack: () => void
-  onUseInChat: () => void
-  onOpenProject: (projectName: string) => void
+  onBack?: () => void
+  onUseInChat?: () => void
+  onOpenProject?: (projectName: string) => void
+  /** Embedded mode (e.g. inside an AI 分身 tab) — drops the top bar
+   *  (返回 / 去使用) and the right sidebar (基础信息 / 血缘 / 相关能力),
+   *  leaving just the hero + documentation in a single column. */
+  embedded?: boolean
 }
 
 export default function CapabilityDetailView({
@@ -80,6 +84,7 @@ export default function CapabilityDetailView({
   onBack,
   onUseInChat,
   onOpenProject,
+  embedded = false,
 }: CapabilityDetailViewProps) {
   const { icon: Icon, tone: capTone } = capabilityVisual(capability)
 
@@ -115,29 +120,38 @@ export default function CapabilityDetailView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface-0)]">
-      {/* Top bar */}
-      <div className="flex shrink-0 items-center justify-between gap-3 px-8 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="-ml-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[13px] text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-        >
-          <ArrowLeft size={13} strokeWidth={1.8} />
-          资源库
-        </button>
-        <button
-          type="button"
-          onClick={onUseInChat}
-          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-4 py-1.5 text-[13px] font-medium text-[var(--color-surface-0)] transition-opacity hover:opacity-90"
-        >
-          <Sparkles size={13} strokeWidth={1.8} />
-          去使用
-        </button>
-      </div>
+      {/* Top bar — hidden in embedded mode */}
+      {!embedded && (
+        <div className="flex shrink-0 items-center justify-between gap-3 px-8 py-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="-ml-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[13px] text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
+          >
+            <ArrowLeft size={13} strokeWidth={1.8} />
+            资源库
+          </button>
+          <button
+            type="button"
+            onClick={onUseInChat}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-4 py-1.5 text-[13px] font-medium text-[var(--color-surface-0)] transition-opacity hover:opacity-90"
+          >
+            <Sparkles size={13} strokeWidth={1.8} />
+            去使用
+          </button>
+        </div>
+      )}
 
-      {/* Body — 7 / 3 grid; right column sticky on scroll */}
+      {/* Body — 7 / 3 grid (single column in embedded mode); right column
+           sticky on scroll */}
       <div className="thin-scroll flex-1 overflow-y-auto px-8 py-6">
-        <div className="mx-auto grid max-w-[1280px] grid-cols-[minmax(0,7fr)_minmax(0,3fr)] items-start gap-10">
+        <div
+          className={
+            embedded
+              ? 'mx-auto max-w-[860px]'
+              : 'mx-auto grid max-w-[1280px] grid-cols-[minmax(0,7fr)_minmax(0,3fr)] items-start gap-10'
+          }
+        >
           {/* ── Left column (~70%) ── */}
           <div className="flex min-w-0 flex-col">
             {/* Hero — designed header with ambient glow, large title +
@@ -213,7 +227,8 @@ export default function CapabilityDetailView({
             </Section>
           </div>
 
-          {/* ── Right column (~30%) — sticky ── */}
+          {/* ── Right column (~30%) — sticky; hidden in embedded mode ── */}
+          {!embedded && (
           <div className="thin-scroll sticky top-0 flex max-h-[calc(100vh-120px)] min-w-0 flex-col divide-y divide-[var(--divider-soft)] self-start overflow-y-auto">
             <Section title="基础信息" icon={Info} pad="pb-5">
               <div className="flex flex-col gap-2">
@@ -269,7 +284,7 @@ export default function CapabilityDetailView({
                     <button
                       key={p}
                       type="button"
-                      onClick={() => onOpenProject(p)}
+                      onClick={() => onOpenProject?.(p)}
                       className="inline-flex items-center gap-1 rounded-md bg-[var(--fill-subtle)] px-2 py-1 text-[12.5px] text-[var(--color-ink)] transition-colors hover:bg-[var(--fill-hover)]"
                     >
                       {p}
@@ -308,6 +323,7 @@ export default function CapabilityDetailView({
               </Section>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>
