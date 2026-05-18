@@ -68,18 +68,28 @@ export const OFFICIAL_DOMAINS: PrimaryCategory[] = [
   '官方引入',
 ]
 
-/* ─── Cross-cutting capability tags. Independent from the platform's
- *  primary/secondary classification — these describe what a capability
- *  is *for* (e.g. 视频内容, 办公效率, 代码工具) and drive the horizontal
- *  filter strip in the resource library. Order here is the display
- *  order in the strip. */
-export const CAPABILITY_TAGS = [
+/* ─── Two orthogonal filter dimensions for capabilities:
+ *    • SCENE_TAGS  — which surface the capability lives on (抖音 Feed /
+ *      直播内容 …). Selecting one in the 场景 dropdown narrows the
+ *      list. Capabilities whose name doesn't match a scene are simply
+ *      excluded by that filter (no "其他" bucket here).
+ *    • CAPABILITY_TAGS — what the capability *does* (灵感创作 / 开发工具
+ *      …), driven by keyword rules. Falls back to "其他" when none
+ *      match. This is the tag shown on every card. */
+
+export const SCENE_TAGS = [
   '抖音 Feed',
   '抖音评论',
   '抖音群聊',
-  '抖音搜索和热榜',
+  '抖音搜索',
+  '抖音热点',
   '视频内容',
   '直播内容',
+] as const
+
+export type SceneTag = (typeof SCENE_TAGS)[number]
+
+export const CAPABILITY_TAGS = [
   '灵感创作',
   '账号信息',
   '内容处理',
@@ -96,34 +106,22 @@ export const CAPABILITY_TAGS = [
 
 export type CapabilityTag = (typeof CAPABILITY_TAGS)[number]
 
-const TAG_RULES: { tag: Exclude<CapabilityTag, '其他'>; patterns: string[] }[] = [
+const SCENE_RULES: { tag: SceneTag; patterns: string[] }[] = [
   // Order matters — first match wins, so put more specific patterns first.
-  { tag: '抖音 Feed', patterns: ['抖音 feed', '抖音feed', 'douyin feed', 'feed流', 'feed 流'] },
+  { tag: '抖音 Feed', patterns: ['抖音 feed', '抖音feed', 'douyin feed', 'feed流', 'feed 流', '信息流'] },
   { tag: '抖音评论', patterns: ['抖音评论', '评论区', '评论'] },
   { tag: '抖音群聊', patterns: ['群聊', '抖音群', 'im-chat', 'lark-im', '飞书群'] },
-  {
-    tag: '抖音搜索和热榜',
-    patterns: ['抖音搜索', '搜索抖音', '热点', '热搜', '热门', '热榜', 'hot', 'trending', 'douyin-search', '榜单', '舆情', '战报'],
-  },
-  {
-    tag: '直播内容',
-    patterns: ['直播', 'live', 'livestream'],
-  },
-  {
-    tag: '视频内容',
-    patterns: ['视频', 'video', '剪辑', 'videocut', '短剧', 'short-drama', 'drama', '妙记'],
-  },
-  {
-    tag: '灵感创作',
-    patterns: ['灵感', '头脑风暴', 'brainstorm', '创意', '选题', '草稿', '撰写', '文案', 'creator', 'gen-', '创作', '创建'],
-  },
+  { tag: '抖音搜索', patterns: ['抖音搜索', '搜索抖音', 'douyin-search', '看后搜'] },
+  { tag: '抖音热点', patterns: ['热点', '热搜', '热门', '热榜', 'hot', 'trending', '榜单', '舆情', '战报'] },
+  { tag: '直播内容', patterns: ['直播', 'live', 'livestream'] },
+  { tag: '视频内容', patterns: ['视频', 'video', '剪辑', 'videocut', '短剧', 'short-drama', 'drama', '妙记'] },
+]
+
+const CAPABILITY_RULES: { tag: Exclude<CapabilityTag, '其他'>; patterns: string[] }[] = [
+  // Order matters — first match wins, so put more specific patterns first.
   {
     tag: '账号信息',
     patterns: ['账号', '作者', 'author', '用户画像', '人设', 'profile', 'persona', '粉丝'],
-  },
-  {
-    tag: '内容处理',
-    patterns: ['改写', '润色', '生成', 'generate', '总结', 'summary', 'write', '内容生成', '内容处理'],
   },
   {
     tag: '视觉制作',
@@ -140,7 +138,7 @@ const TAG_RULES: { tag: Exclude<CapabilityTag, '其他'>; patterns: string[] }[]
   },
   {
     tag: '联网搜索',
-    patterns: ['网络搜索', '全网搜索', '联网', 'web-search', '搜索'],
+    patterns: ['网络搜索', '全网搜索', '联网', 'web-search'],
   },
   {
     tag: '开发工具',
@@ -162,11 +160,32 @@ const TAG_RULES: { tag: Exclude<CapabilityTag, '其他'>; patterns: string[] }[]
     tag: '治理服务',
     patterns: ['治理', '违规', '风险', '风控', '合规', '安全', 'security', 'risk', 'governance', '审核', '检测', 'detection', '反作弊', 'anti'],
   },
+  {
+    tag: '内容处理',
+    patterns: ['改写', '润色', '总结', 'summary', '内容处理', '解读', '分析', '拆解'],
+  },
+  {
+    tag: '灵感创作',
+    patterns: ['灵感', '头脑风暴', 'brainstorm', '创意', '选题', '草稿', '撰写', '文案', 'creator', 'gen-', '创作', '创建', '生成', 'generate', 'write'],
+  },
 ]
+
+/** Map a capability name → scene tag. Returns `null` when no scene
+ *  pattern matches; callers should treat that as "no scene" rather than
+ *  bucketing into "其他". */
+export function inferSceneTag(name: string): SceneTag | null {
+  const lower = name.toLowerCase()
+  for (const rule of SCENE_RULES) {
+    if (rule.patterns.some((p) => lower.includes(p.toLowerCase()))) {
+      return rule.tag
+    }
+  }
+  return null
+}
 
 export function inferCapabilityTag(name: string): CapabilityTag {
   const lower = name.toLowerCase()
-  for (const rule of TAG_RULES) {
+  for (const rule of CAPABILITY_RULES) {
     if (rule.patterns.some((p) => lower.includes(p.toLowerCase()))) {
       return rule.tag
     }
@@ -600,7 +619,10 @@ export const RESOURCES: Resource[] = [
     capabilities: [
       { type: 'skill', name: '查询主播开播时长' },
       { type: 'skill', name: '直播间观众画像分析' },
+      { type: 'skill', name: '直播热度趋势分析' },
+      { type: 'skill', name: '主播带货 GMV 拆解' },
       { type: 'tool', name: '调整直播间排序权重' },
+      { type: 'tool', name: '直播流量加热配置' },
       { type: 'knowledge', name: '直播运营 SOP' },
     ],
   },
@@ -917,6 +939,31 @@ export const RESOURCES: Resource[] = [
       { type: 'tool', name: '读取 Figma 文件' },
       { type: 'tool', name: '导出 Frame 截图' },
       { type: 'skill', name: '设计稿组件抽取' },
+    ],
+  },
+
+  /* ─── 空间 — 用户 / 团队自建的资源空间，沉淀草稿、知识、项目记忆、
+   *     人设。与 官方 / 官方引入 互补：这里是「我自己 / 我们团队」的
+   *     资产，全部归到单个「空间」一级节点下展示。 ─── */
+  {
+    id: 'space',
+    name: '空间',
+    description: '团队 / 个人自建的资源沉淀：草稿 · 知识 · 项目档案 · 人设',
+    primaryCategory: '空间',
+    secondaryCategory: '空间',
+    capabilities: [
+      { type: 'skill', name: '召回最近草稿' },
+      { type: 'tool', name: '保存当前对话片段' },
+      { type: 'knowledge', name: '提示词收藏夹' },
+      { type: 'skill', name: '团队 wiki 检索' },
+      { type: 'knowledge', name: '行业 SOP 库' },
+      { type: 'knowledge', name: '会议纪要档案' },
+      { type: 'tool', name: '上传新文档' },
+      { type: 'skill', name: '相似项目检索' },
+      { type: 'knowledge', name: '历史提案库' },
+      { type: 'tool', name: '复用项目模板' },
+      { type: 'skill', name: '匹配相近人设' },
+      { type: 'knowledge', name: '人设设定档' },
     ],
   },
 ]
