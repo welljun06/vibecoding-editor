@@ -1,5 +1,10 @@
 import { create } from 'zustand'
 import type { PublishTargetId } from './publish-flow-store'
+import {
+  DEFAULT_NODES_BY_KIND,
+  SUB_KINDS_BY_NODE,
+  type WorkspaceNodeKind,
+} from './workspace-nodes'
 
 /* ─── Artifact model ─────────────────────────────────────────────────────
  *
@@ -302,26 +307,31 @@ interface ArtifactState {
   activeProjectId: string
   /** Currently focused artifact within the active project. */
   activeArtifactId: string | null
-  /** Which view tab of the active artifact is open. Value must belong to
-   *  the current `viewScheme`'s tab set. */
-  activeView: ArtifactViewTab
-  /** Which view scheme is in effect. Switched from the ··· menu. */
-  viewScheme: ViewScheme
-  /** When `viewScheme === 'condensed'` and `activeView === 'artifact'`,
-   *  which inner sub-tab is selected. Preserved across switches so the
-   *  user keeps their last context. */
-  condensedSubTab: CondensedArtifactSubTab
+  /** Layer-1 tab list per project. Seeded lazily from the kind's
+   *  default node list on first read. */
+  workspaceTabsByProject: Record<string, WorkspaceTabRef[]>
+  /** Active Layer-1 tab id per project. */
+  activeWorkspaceTabByProject: Record<string, string | null>
+  /** Layer-2 sub-tab (ArtifactKind) per (projectId, nodeKind). Key =
+   *  `${projectId}:${nodeKind}`. Falls back to the node's first
+   *  supported kind when unset. */
+  layer2SubKindByContext: Record<string, ArtifactKind>
 
-  /** Whether the database overlay drawer is open. In condensed scheme
-   *  this is the primary way to access the database; in detailed scheme
-   *  it's a quick-access shortcut alongside the 数据库 tab. */
+  /** Whether the database overlay drawer is open. Triggered by the
+   *  database icon in the top-right cluster — independent of the
+   *  database workspace tab. */
   databaseOverlayOpen: boolean
 
   setActiveProject: (id: string) => void
   setActiveArtifact: (id: string | null) => void
-  setActiveView: (v: ArtifactViewTab) => void
-  setViewScheme: (s: ViewScheme) => void
-  setCondensedSubTab: (s: CondensedArtifactSubTab) => void
+  setActiveWorkspaceTab: (projectId: string, tabId: string) => void
+  addWorkspaceTab: (projectId: string, kind: WorkspaceNodeKind) => void
+  closeWorkspaceTab: (projectId: string, tabId: string) => void
+  setLayer2SubKind: (
+    projectId: string,
+    nodeKind: WorkspaceNodeKind,
+    artifactKind: ArtifactKind,
+  ) => void
   setDatabaseOverlayOpen: (open: boolean) => void
 
   createArtifact: (
@@ -339,105 +349,26 @@ interface ArtifactState {
   ensureProjectByTitle: (title: string, kind: ProjectKindKey) => string
 }
 
-/** Right-side workspace navigation. Each tab is a *view* of the currently
- *  selected artifact — Layer 1 in the 4-layer artifact workspace. */
-export type ArtifactViewTab =
-  // — detailed scheme: per-aspect tabs —
-  | 'preview'
-  | 'edit'
-  | 'data'
-  | 'dashboard'
-  // — condensed scheme: 产物 collapses preview/edit/data into one tab
-  //   with a Layer 2 sub-strip switching between them. 运行 is the
-  //   condensed-scheme alias for dashboard. —
-  | 'artifact'
-  | 'runtime'
-  // — shared between schemes —
-  | 'publish'
+/* ─── Workspace tab (Layer 1) ───────────────────────────────────────────
+ *
+ * The right pane is a directory-driven workspace: each Layer-1 tab is
+ * a "workspace node" (界面预览 / 数据库 / 代码文件 / …) sourced from the
+ * left-side project directory. The catalog and per-project defaults
+ * live in `workspace-nodes.ts`; this store tracks which nodes are
+ * currently pinned per project and which one is active.
+ *
+ * A pinned tab list is kept per `projectId` so switching projects
+ * restores its tab layout. New projects start from the kind's default
+ * list; the user can `+` add additional nodes from the picker.
+ */
 
-export const VIEW_LABELS: Record<ArtifactViewTab, string> = {
-  preview: '预览',
-  edit: '编辑',
-  data: '数据库',
-  publish: '发布', // detailed uses '发布渠道', condensed uses '发布' — we
-                  // render the per-scheme label from the LABELS_BY_SCHEME
-                  // map below; this generic field is a fallback.
-  dashboard: '运营数据',
-  artifact: '产物',
-  runtime: '运行',
-}
-
-/** The two view schemes the user can pick from. Detailed = power-user
- *  layout; condensed = simplified 3-tab layout aimed at non-technical
- *  operators where preview/edit/data live behind a single 产物 tab. */
-export type ViewScheme = 'detailed' | 'condensed'
-
-export const VIEW_SCHEME_LABELS: Record<ViewScheme, string> = {
-  detailed: '详细视图',
-  condensed: '紧凑视图',
-}
-
-export const VIEW_SCHEME_HINTS: Record<ViewScheme, string> = {
-  detailed: '5 个 tab · 预览 / 编辑 / 数据库 / 发布渠道 / 运营数据',
-  condensed: '3 个 tab · 产物 / 发布 / 运营数据 — 数据库从右上图标进入',
-}
-
-/** Tab strip for each scheme. Detailed = 5 per-aspect tabs; condensed
- *  merges 预览+编辑 into 产物 → 3 tabs. Condensed pushes 数据库 out of
- *  the strip and into the top-right icon cluster (it stays in detailed
- *  as a tab for power users). */
-export const TABS_BY_SCHEME: Record<ViewScheme, ArtifactViewTab[]> = {
-  detailed: ['preview', 'edit', 'data', 'publish', 'dashboard'],
-  condensed: ['artifact', 'publish', 'dashboard'],
-}
-
-/** Per-scheme labels for the Layer 1 tab. Both schemes use 数据库 /
- *  发布渠道 / 运营数据 — the condensed scheme only renames preview/edit
- *  into a single 产物 entry. */
-export const TAB_LABELS_BY_SCHEME: Record<
-  ViewScheme,
-  Partial<Record<ArtifactViewTab, string>>
-> = {
-  detailed: {},
-  condensed: {},
-}
-
-/** @deprecated — kept temporarily for backwards compat with older
- *  code; condensed scheme no longer carries a Layer 2 sub-tab (the
- *  merged 产物 tab uses the host's existing unified file-tab strip). */
-export type CondensedArtifactSubTab = 'preview' | 'edit' | 'data'
-export const CONDENSED_SUB_LABELS: Record<CondensedArtifactSubTab, string> = {
-  preview: '预览',
-  edit: '编辑',
-  data: '数据库',
-}
-
-/** Which top-level tabs are meaningful for each artifact kind in the
- *  detailed scheme. Ops-proposal documents are static deliverables — no
- *  live runtime data or operations dashboard makes sense for them. */
-export const VIEW_TABS_BY_KIND: Record<ArtifactKind, ArtifactViewTab[]> = {
-  'persona-card': ['preview', 'edit', 'data', 'publish', 'dashboard'],
-  'scene-card': ['preview', 'edit', 'data', 'publish', 'dashboard'],
-  'mp-page': ['preview', 'edit', 'data', 'publish', 'dashboard'],
-  'mp-agent': ['preview', 'edit', 'data', 'publish', 'dashboard'],
-  'proposal-doc': ['preview', 'edit', 'publish'],
-}
-
-/** Detailed → condensed mapping. preview/edit → artifact (merged tab).
- *  data → artifact too, since the condensed scheme moves the database
- *  out of the tab strip into the icon cluster — switching to condensed
- *  while on the data tab lands on 产物 (database is still accessible
- *  via the right-side database icon). */
-export function detailedToCondensed(v: ArtifactViewTab): ArtifactViewTab {
-  if (v === 'preview' || v === 'edit' || v === 'data') return 'artifact'
-  return v
-}
-
-/** Condensed → detailed mapping. artifact → preview (default landing
- *  state for the merged tab). Others pass through. */
-export function condensedToDetailed(v: ArtifactViewTab): ArtifactViewTab {
-  if (v === 'artifact') return 'preview'
-  return v
+export interface WorkspaceTabRef {
+  /** The node kind — drives icon, label, content dispatcher. */
+  kind: WorkspaceNodeKind
+  /** Stable id so tabs are addressable (`kind` could repeat if the
+   *  user opens multiple code-file tabs, but for now we cap at 1
+   *  instance per kind so id === kind in practice). */
+  id: string
 }
 
 export const KIND_LABELS: Record<ArtifactKind, string> = {
@@ -460,9 +391,9 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
   artifacts: SEED_ARTIFACTS,
   activeProjectId: 'ai-fans-bot',
   activeArtifactId: 'persona-card-main',
-  activeView: 'preview',
-  viewScheme: 'detailed',
-  condensedSubTab: 'preview',
+  workspaceTabsByProject: {},
+  activeWorkspaceTabByProject: {},
+  layer2SubKindByContext: {},
   databaseOverlayOpen: false,
 
   setActiveProject: (id) => {
@@ -476,14 +407,9 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
       ? projectArtifacts.find((a) => a.id === proj.lastArtifactId)
       : null
     const nextArtifact = lastValid ?? projectArtifacts[0] ?? null
-    const currentView = get().activeView
-    const allowedForNext = nextArtifact
-      ? VIEW_TABS_BY_KIND[nextArtifact.kind]
-      : (['preview'] as ArtifactViewTab[])
     set({
       activeProjectId: id,
       activeArtifactId: nextArtifact?.id ?? null,
-      activeView: allowedForNext.includes(currentView) ? currentView : allowedForNext[0],
     })
   },
   setActiveArtifact: (id) => {
@@ -495,29 +421,58 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
           p.id === projId ? { ...p, lastArtifactId: id, updatedAt: Date.now() } : p,
         ),
       })
-      // If the current view doesn't apply to the new artifact's kind,
-      // gracefully fall back to 'preview' — avoids showing an empty pane.
-      const artifact = get().artifacts.find((a) => a.id === id)
-      if (artifact) {
-        const allowed = VIEW_TABS_BY_KIND[artifact.kind]
-        if (!allowed.includes(get().activeView)) {
-          set({ activeView: 'preview' })
-        }
-      }
     }
   },
-  setActiveView: (v) => set({ activeView: v }),
-  setViewScheme: (s) => {
-    const cur = get()
-    // Switch + remap current view to the closest equivalent in the new
-    // scheme so the user doesn't lose context.
-    const nextActive =
-      s === 'condensed'
-        ? detailedToCondensed(cur.activeView)
-        : condensedToDetailed(cur.activeView)
-    set({ viewScheme: s, activeView: nextActive })
+  setActiveWorkspaceTab: (projectId, tabId) =>
+    set({
+      activeWorkspaceTabByProject: {
+        ...get().activeWorkspaceTabByProject,
+        [projectId]: tabId,
+      },
+    }),
+  addWorkspaceTab: (projectId, kind) => {
+    const cur = get().workspaceTabsByProject[projectId] ?? []
+    // Cap one instance per kind for now — clicking the same node from
+    // the picker re-activates the existing tab instead of duplicating.
+    const existing = cur.find((t) => t.kind === kind)
+    if (existing) {
+      get().setActiveWorkspaceTab(projectId, existing.id)
+      return
+    }
+    const id = kind
+    set({
+      workspaceTabsByProject: {
+        ...get().workspaceTabsByProject,
+        [projectId]: [...cur, { kind, id }],
+      },
+      activeWorkspaceTabByProject: {
+        ...get().activeWorkspaceTabByProject,
+        [projectId]: id,
+      },
+    })
   },
-  setCondensedSubTab: (s) => set({ condensedSubTab: s }),
+  closeWorkspaceTab: (projectId, tabId) => {
+    const cur = get().workspaceTabsByProject[projectId] ?? []
+    const next = cur.filter((t) => t.id !== tabId)
+    const wasActive = get().activeWorkspaceTabByProject[projectId] === tabId
+    set({
+      workspaceTabsByProject: {
+        ...get().workspaceTabsByProject,
+        [projectId]: next,
+      },
+      activeWorkspaceTabByProject: {
+        ...get().activeWorkspaceTabByProject,
+        [projectId]: wasActive ? next[0]?.id ?? null : get().activeWorkspaceTabByProject[projectId],
+      },
+    })
+  },
+  setLayer2SubKind: (projectId, nodeKind, artifactKind) =>
+    set({
+      layer2SubKindByContext: {
+        ...get().layer2SubKindByContext,
+        [`${projectId}:${nodeKind}`]: artifactKind,
+      },
+    }),
   setDatabaseOverlayOpen: (open) => set({ databaseOverlayOpen: open }),
 
   createArtifact: (input) => {
@@ -592,4 +547,45 @@ export const useArtifactStore = create<ArtifactState>((set, get) => ({
 
 export function artifactsOfProject(projectId: string, all: Artifact[]): Artifact[] {
   return all.filter((a) => a.projectId === projectId)
+}
+
+/** Resolve the workspace-tab list for a project. If the project has no
+ *  saved layout yet, fall through to the kind's default node list.
+ *  Pure read — does not mutate state. */
+export function getWorkspaceTabs(
+  state: Pick<ArtifactState, 'workspaceTabsByProject' | 'projects'>,
+  projectId: string,
+): WorkspaceTabRef[] {
+  const saved = state.workspaceTabsByProject[projectId]
+  if (saved && saved.length > 0) return saved
+  const project = state.projects.find((p) => p.id === projectId)
+  if (!project) return []
+  const defaults = DEFAULT_NODES_BY_KIND[project.kind] ?? []
+  return defaults.map((k) => ({ kind: k, id: k }))
+}
+
+/** Resolve the active workspace tab for a project — preferring the
+ *  per-project state, falling through to the first tab in the
+ *  resolved list. */
+export function getActiveWorkspaceTabId(
+  state: Pick<ArtifactState, 'workspaceTabsByProject' | 'activeWorkspaceTabByProject' | 'projects'>,
+  projectId: string,
+): string | null {
+  const tabs = getWorkspaceTabs(state, projectId)
+  const stored = state.activeWorkspaceTabByProject[projectId]
+  if (stored && tabs.some((t) => t.id === stored)) return stored
+  return tabs[0]?.id ?? null
+}
+
+/** Resolve the Layer-2 sub-kind for (projectId, nodeKind). Falls back
+ *  to the node's first supported artifact kind. */
+export function getLayer2SubKind(
+  state: Pick<ArtifactState, 'layer2SubKindByContext'>,
+  projectId: string,
+  nodeKind: WorkspaceNodeKind,
+): ArtifactKind | null {
+  const key = `${projectId}:${nodeKind}`
+  const stored = state.layer2SubKindByContext[key]
+  if (stored) return stored
+  return SUB_KINDS_BY_NODE[nodeKind]?.[0] ?? null
 }
