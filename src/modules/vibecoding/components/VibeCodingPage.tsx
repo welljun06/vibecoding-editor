@@ -4870,12 +4870,21 @@ export default function VibeCodingPage() {
         style={
           isPlatform
             ? {
-                marginLeft: previewHidden
-                  ? `calc(${effectiveSidebarWidth}px + min(calc(100vw - ${effectiveSidebarWidth}px), ${PREVIEW_HIDDEN_CHAT_MAX}px))`
-                  : effectiveSidebarWidth +
-                    (platformHomeOpen || platformSecondaryPageOpen
-                      ? 0
-                      : platformChatWidth),
+                // Body marginLeft has 3 cases:
+                //   - On a platform secondary page (资源库 / Skills / 创意广场)
+                //     or home: chat aside is hidden, so the body hugs
+                //     the sidebar's right edge directly.
+                //   - In a project where previewHidden (ops-proposal
+                //     empty-state) is true: the chat is centered inside
+                //     a wider column, push the body past it.
+                //   - Normal project view: chat sits flush against the
+                //     sidebar at its draggable width.
+                marginLeft:
+                  platformHomeOpen || platformSecondaryPageOpen
+                    ? effectiveSidebarWidth
+                    : previewHidden
+                      ? `calc(${effectiveSidebarWidth}px + min(calc(100vw - ${effectiveSidebarWidth}px), ${PREVIEW_HIDDEN_CHAT_MAX}px))`
+                      : effectiveSidebarWidth + platformChatWidth,
               }
             : undefined
         }
