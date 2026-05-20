@@ -2363,6 +2363,7 @@ export default function VibeCodingPage() {
   const startPublish = usePublishFlowStore((s) => s.start)
   const resetPublish = usePublishFlowStore((s) => s.reset)
   const setPublishAnchorRect = usePublishFlowStore((s) => s.setAnchorRect)
+  const publishJobs = usePublishFlowStore((s) => s.jobs)
   const togglePublishScene = usePublishFlowStore((s) => s.toggleScene)
   const submitPublish = usePublishFlowStore((s) => s.submit)
   const confirmPublish = usePublishFlowStore((s) => s.confirm)
@@ -2430,11 +2431,14 @@ export default function VibeCodingPage() {
   // panel, so body starts at 20 + 347 + 16 = 383px.
   // Platform adds a 230px project sidebar on the far left; chat sits flush
   // against it, so body offset is 230 + 420 = 650px.
-  const headerMarginClass = isPlatform
+  // Header margin class retired — the fixed top-strip header was
+  // refactored into chat-aside / preview-container internal headers.
+  const _headerMarginClass = isPlatform
     ? 'ml-[230px]'
     : chatOnLeft
       ? ''
       : 'mr-[420px]'
+  void _headerMarginClass
   // Platform: sidebar(230) + chat(platformChatWidth) = marginLeft for the
   // preview panel. The chat sits flush against the preview inside the
   // shared card; their boundary is marked by the chat aside's `border-r`.
@@ -4050,6 +4054,22 @@ export default function VibeCodingPage() {
   } = useArtifactViewSync(projectTitle, activeProjectKind)
   const databaseOverlayOpen = useArtifactStore((s) => s.databaseOverlayOpen)
   const setDatabaseOverlayOpen = useArtifactStore((s) => s.setDatabaseOverlayOpen)
+  const storeArtifactsAll = useArtifactStore((s) => s.artifacts)
+  /** Project-level publish-state hint — controls whether the top-right
+   *  CTA reads as `发布` (first time) or `更新` (project already has at
+   *  least one succeeded publish job). */
+  const projectHasSucceededJob = (() => {
+    const projectArtifactIds = new Set(
+      storeArtifactsAll.filter((a) => a.projectId === moduleProjectId).map((a) => a.id),
+    )
+    return publishJobs.some(
+      (j) =>
+        j.status === 'succeeded' &&
+        (j.artifactIds.length === 0 ||
+          j.artifactIds.some((aid) => projectArtifactIds.has(aid))),
+    )
+  })()
+  const publishCtaLabel = projectHasSucceededJob ? '更新' : '发布'
   /** True when we should defer to the host page's existing surface for
    *  the middle column. Covers:
    *   - 界面预览 node + app-shape artifact → phone preview + filter
@@ -4572,8 +4592,9 @@ export default function VibeCodingPage() {
 
       {/* ── Platform layout: shared white card frame behind chat + preview.
            Lives below body content (z) so chat aside (z-30) and preview
-           (inside body z-10) paint on top. Provides rounded/ring/bg so the
-           two columns read as a single card split by chat's border-r. ── */}
+           (inside body z-10) paint on top. Provides rounded/ring/bg so
+           the two columns read as a single card split by chat's
+           border-r. ── */}
       {isPlatform && (
         <div
           aria-hidden
@@ -4610,27 +4631,16 @@ export default function VibeCodingPage() {
         </>
       )}
 
-      {/* ══════ Header ══════ Platform: fixed as the card's top strip (no
-          back / publish). Others: normal in-flow top bar. Hidden on the
-          platform home screen and the 资源库 page — both are second-level
-          views that don't belong to a project, so showing a project title
-          would be misleading. */}
-      {!(isPlatform && (platformHomeOpen || platformSecondaryPageOpen)) && (
-      <header
-        className={`z-20 flex items-center justify-between px-4 transition-[margin] duration-300 ${
-          isPlatform
-            ? 'fixed top-3 right-3 h-[44px] rounded-t-[16px] border-b border-[var(--divider-soft)]'
-            : `relative h-14 shrink-0 ${
-                chatOnLeft ? '' : 'border-b border-[var(--divider-soft)]'
-              } ${chatCollapsed ? '' : headerMarginClass}`
-        }`}
-        style={isPlatform ? { left: effectiveSidebarWidth } : undefined}
-      >
+      {/* Header retired entirely — layout is locked to platform mode
+           and both halves of what used to be a fixed top strip now
+           live inside their own column (chat-internal header for the
+           project title; preview-internal header for tabs + 发布). */}
+      {false && (
+        <>
         {/* Vertical divider aligned with the chat aside's right border —
-             extends the chat / preview seam up through the header so the
-             two columns read as two independent blocks (left = chat, right
-             = preview) instead of one continuous strip. Only when the
-             preview column is visible (mirrors the chat aside's border). */}
+             extends the chat / preview seam up through the header so
+             the two columns read as two distinct blocks (left = chat,
+             right = preview) inside the shared card frame. */}
         {isPlatform &&
           !chatCollapsed &&
           !previewHidden &&
@@ -4855,18 +4865,17 @@ export default function VibeCodingPage() {
             </button>
           )}
         </div>
-      </header>
+        </>
       )}
-
-      {/* ══════ Body ══════ Platform pushes content below the fixed
+      {/* ══════ Body ══════ Platform headers are now embedded inside the
            card-top header strip: 12px card-top + 44px header = 56px (pt-14).
            Left margin for platform tracks the draggable chat width and is
            applied via inline style since Tailwind arbitrary values are
            compile-time. */}
       <div
-        className={`relative z-10 flex min-h-0 flex-1 overflow-hidden transition-[margin] duration-300 ${
+        className={`relative z-10 flex min-h-0 flex-1 overflow-hidden ${
           chatCollapsed || isPlatform ? '' : bodyMarginClass
-        } ${isPlatform && !platformHomeOpen && !platformSecondaryPageOpen ? 'pt-14' : ''}`}
+        } ${isPlatform && !platformHomeOpen && !platformSecondaryPageOpen ? 'pt-3' : ''}`}
         style={
           isPlatform
             ? {
@@ -4892,9 +4901,9 @@ export default function VibeCodingPage() {
         {/* ────── Chat aside — fixed to viewport. Code: below header, flush left with 20px gutter. Platform: flush against the preview inside the shared card (card frame is painted separately just below). Otherwise: pins top-0 on the right with a rounded glass panel. Hidden when platform home screen / resource library page is active. ────── */}
         {!(isPlatform && (platformHomeOpen || platformSecondaryPageOpen)) && (
         <aside
-          className={`fixed z-30 flex flex-shrink-0 items-center transition-[width] duration-300 ${
+          className={`fixed z-30 flex flex-shrink-0 items-center ${
             isPlatform
-              ? `top-14 bottom-3 ${previewHidden ? '' : 'border-r border-[var(--divider)]'}`
+              ? `top-3 bottom-3 ${previewHidden ? '' : 'border-r border-[var(--divider-soft)]'}`
               : chatOnLeft
                 ? 'left-5 top-14 bottom-5'
                 : 'right-0 top-0 bottom-0'
@@ -4932,10 +4941,39 @@ export default function VibeCodingPage() {
                 : 'glass-edge-down rounded-[24px] bg-[rgba(65,65,65,0.2)] shadow-[-16px_0_40px_-20px_rgba(0,0,0,0.3)] backdrop-blur-[32px]'
             }`}
           >
-          <div className={`flex h-full min-h-0 flex-col ${isPlatform ? 'px-2 pt-3 pb-2' : chatOnLeft ? '' : 'px-1.5 pt-3 pb-1.5'}`}>
-          {/* Chat-header row removed — session switcher + new-session
-               button now live in the top header (next to the project
-               title) so they share a single row with project naming. */}
+          <div className={`flex h-full min-h-0 flex-col ${isPlatform ? 'px-2 pt-0 pb-2' : chatOnLeft ? '' : 'px-1.5 pt-3 pb-1.5'}`}>
+          {/* Chat card header — project title + rename. Lives inside the
+               chat aside so it moves in lockstep with the chat column
+               on drag-resize (no separate fixed strip that could lag).
+               No border-b — visually merges with the chat body below. */}
+          {isPlatform && (
+            <div className="flex h-11 shrink-0 items-center gap-2 px-3">
+              {editingProjectTitle ? (
+                <input
+                  autoFocus
+                  value={projectTitle}
+                  onChange={(e) => setProjectTitle(e.target.value)}
+                  onBlur={() => setEditingProjectTitle(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Escape') setEditingProjectTitle(false)
+                  }}
+                  className="w-[220px] border-b border-[var(--color-ink)]/40 bg-transparent text-[12.5px] text-[var(--color-ink)] outline-none focus:border-[var(--color-ink)]"
+                />
+              ) : (
+                <span className="truncate text-[12.5px] font-medium text-[var(--color-ink)]/85">
+                  {projectTitle}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setEditingProjectTitle((v) => !v)}
+                title={editingProjectTitle ? '完成' : '重命名项目'}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-soft)] hover:text-[var(--color-ink)]"
+              >
+                {editingProjectTitle ? <Check size={11} /> : <Pencil size={11} />}
+              </button>
+            </div>
+          )}
           {/* Scrollable messages */}
           <div ref={chatScrollRef} className={`thin-scroll flex-1 overflow-y-auto px-2.5 pt-8 pb-8 ${chatCleared ? '' : 'space-y-6'} ${fadeClassFromEdges(chatScrollEdges)}`}>
             {(chatCleared || (!needsFlowActive && !showChatPublish && sentMessages.length === 0)) && proposalStep === 'idle' ? (
@@ -7108,7 +7146,106 @@ export default function VibeCodingPage() {
              the right half of that card, so it just needs right/bottom
              margin to align with the card's interior; the rounded/ring
              come from the card frame. ────── */}
-        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${isPlatform ? 'mb-3 mr-3 overflow-hidden rounded-br-[16px]' : ''}`}>
+        <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${isPlatform ? 'mb-3 mr-3 overflow-hidden rounded-r-[16px]' : ''}`}>
+          {/* Preview card header — workspace tabs + icons + 运营数据 +
+               发布 CTA. Lives inside the preview container so it moves
+               in lockstep with the preview column on chat-resize drag. */}
+          {isPlatform && (
+            <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-[var(--divider-soft)] px-3">
+              <div className="flex min-w-0 items-center gap-1">
+                <WorkspaceTabBar
+                  projectId={moduleProjectId}
+                  projectKind={activeProjectKind}
+                  tabs={workspaceTabs}
+                  activeTabId={activeTabId}
+                />
+              </div>
+              <div className="flex items-center gap-0.5">
+                {/* Layout / appearance menu */}
+                <div ref={layoutMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMenuOpen((v) => !v)}
+                    title="更多"
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-soft)] hover:text-[var(--color-ink)]"
+                  >
+                    <MoreHorizontal size={14} strokeWidth={1.8} />
+                  </button>
+                  {layoutMenuOpen && (
+                    <div className="absolute right-0 top-full z-50 mt-1 w-[200px] overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--color-surface-2)] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] backdrop-blur-xl">
+                      <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-ink)]/40">
+                        外观
+                      </div>
+                      {([
+                        { value: 'light' as const, label: '亮色模式', icon: Sun },
+                        { value: 'dark' as const, label: '暗色模式', icon: Moon },
+                      ]).map((opt) => {
+                        const Icon = opt.icon
+                        const active = themeMode === opt.value
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setThemeMode(opt.value)
+                              setLayoutMenuOpen(false)
+                            }}
+                            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                              active ? 'bg-[var(--color-ink)]/[0.06]' : 'hover:bg-[var(--fill-subtle)]'
+                            }`}
+                          >
+                            <Icon size={14} className={`shrink-0 ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/55'}`} />
+                            <span className={`text-[12px] ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/80'}`}>
+                              {opt.label}
+                              {active && <span className="ml-1.5 text-[10px] text-[var(--color-ink)]/45">当前</span>}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+                {[
+                  { Icon: Headphones, title: '帮助' },
+                  { Icon: Clock, title: '历史' },
+                ].map(({ Icon, title }) => (
+                  <button
+                    key={title}
+                    title={title}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-soft)] hover:text-[var(--color-ink)]"
+                  >
+                    <Icon size={14} strokeWidth={1.8} />
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="ml-0.5 flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-soft)] hover:text-[var(--color-ink)]"
+                >
+                  <ChartLineIcon size={13} strokeWidth={1.8} />
+                  运营数据
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    resetPublish()
+                    setPublishAnchorRect({
+                      top: rect.top,
+                      left: rect.left,
+                      right: rect.right,
+                      bottom: rect.bottom,
+                      width: rect.width,
+                      height: rect.height,
+                    })
+                    startPublish('modal')
+                  }}
+                  className="ml-1.5 flex h-7 items-center rounded-full bg-[var(--color-ink)] px-3.5 text-[12px] font-medium text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
+                >
+                  {publishCtaLabel}
+                </button>
+              </div>
+            </div>
+          )}
           {/* Non-host views (编辑 / 数据库 / 发布渠道 / 运营数据, and 预览
                for recall-shape artifacts) take over the middle column.
                Host preview (mp-page / mp-agent / empty project / unified
@@ -7234,6 +7371,9 @@ export default function VibeCodingPage() {
                   )}
 
                   <div className="flex items-center gap-2">
+                    {/* 发布 button dropped here — the preview card header
+                         (top of this card) already carries the primary
+                         publish CTA; keeping it here would duplicate. */}
                     {[
                       {
                         label: '重新加载',
@@ -7241,7 +7381,6 @@ export default function VibeCodingPage() {
                         onClick: () => setMiniAppKey((k) => k + 1),
                       },
                       { label: '真机预览', icon: Smartphone },
-                      { label: '发布', icon: Upload },
                     ].map(({ label, icon: Icon, onClick }) => (
                       <button
                         key={label}

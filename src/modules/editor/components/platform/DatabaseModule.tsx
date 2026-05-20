@@ -46,23 +46,21 @@ export default function DatabaseModule({ projectId }: Props) {
     <div className="flex min-h-0 flex-1">
       {/* Tables column */}
       <aside className="flex w-[240px] shrink-0 flex-col border-r border-[var(--divider-soft)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center gap-1 border-b border-[var(--divider-soft)] p-2">
-          <div className="flex h-7 flex-1 items-center gap-0.5 rounded-md bg-[var(--fill-subtle)] p-0.5">
-            {(['dev', 'prod'] as const).map((e) => (
-              <button
-                key={e}
-                type="button"
-                onClick={() => setEnv(projectId, e)}
-                className={`flex h-6 flex-1 items-center justify-center rounded text-[11.5px] transition-colors ${
-                  env === e
-                    ? 'bg-[var(--color-ink)] text-[var(--color-ink-contrast)]'
-                    : 'text-[var(--color-ink)]/65 hover:text-[var(--color-ink)]'
-                }`}
-              >
-                {e === 'dev' ? '开发' : '生产'}
-              </button>
-            ))}
-          </div>
+        <div className="flex h-10 shrink-0 items-center gap-0.5 border-b border-[var(--divider-soft)] px-2">
+          {(['dev', 'prod'] as const).map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => setEnv(projectId, e)}
+              className={`flex h-7 flex-1 items-center justify-center rounded-md text-[12px] transition-colors ${
+                env === e
+                  ? 'bg-[var(--color-ink)]/[0.08] font-medium text-[var(--color-ink)]'
+                  : 'text-[var(--color-ink)]/55 hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/85'
+              }`}
+            >
+              {e === 'dev' ? '开发' : '生产'}
+            </button>
+          ))}
         </div>
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           <div className="px-1 pb-1.5 text-[10.5px] uppercase tracking-[0.05em] text-[var(--color-ink)]/45">
@@ -179,7 +177,7 @@ function SchemaTab({ table }: { table: TableSpec }) {
             >
               <td className="px-4 py-2">
                 <span className="flex items-center gap-1.5">
-                  {c.primary && <Key size={10} className="text-amber-300" strokeWidth={2} />}
+                  {c.primary && <Key size={10} className="text-amber-400 theme-light:text-amber-600" strokeWidth={2} />}
                   <span className={c.primary ? 'font-medium text-[var(--color-ink)]' : ''}>
                     {c.name}
                   </span>
@@ -395,8 +393,12 @@ function Pill({
   children: React.ReactNode
 }) {
   const toneClass = {
-    amber: 'bg-amber-500/15 text-amber-200',
-    violet: 'bg-violet-500/15 text-violet-200',
+    amber:
+      'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/30 ' +
+      'theme-light:bg-amber-500/15 theme-light:text-amber-700 theme-light:ring-amber-500/30',
+    violet:
+      'bg-violet-500/20 text-violet-200 ring-1 ring-violet-500/30 ' +
+      'theme-light:bg-violet-500/15 theme-light:text-violet-700 theme-light:ring-violet-500/30',
     muted: 'bg-[var(--fill-medium)] text-[var(--color-ink)]/65',
   }[tone]
   return (

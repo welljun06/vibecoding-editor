@@ -2,6 +2,11 @@
 @import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&family=Roboto+Flex:opsz,wght@8..144,300;8..144,400;8..144,500;8..144,600;8..144,700&display=swap");
 @import "tailwindcss";
 
+/* Custom variant so components can write `theme-light:text-amber-700` etc.
+ * — the project toggles theme via a `theme-light` class on <html> rather
+ *   than the default `.dark` strategy, so we expose that explicitly. */
+@custom-variant theme-light (&:where(html.theme-light *));
+
 /* Register `--edge-angle` so browsers can animate it between keyframes /
    hover states. Without this, changes jump instantly. */
 @property --edge-angle {
