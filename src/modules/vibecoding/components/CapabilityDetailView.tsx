@@ -72,6 +72,9 @@ interface CapabilityDetailViewProps {
   onBack?: () => void
   onUseInChat?: () => void
   onOpenProject?: (projectName: string) => void
+  /** Label shown next to the back arrow — usually the page the user
+   *  came from (资源库 / Skills). Defaults to 资源库. */
+  backLabel?: string
   /** Embedded mode (e.g. inside an AI 分身 tab) — drops the top bar
    *  (返回 / 去使用) and the right sidebar (基础信息 / 血缘 / 相关能力),
    *  leaving just the hero + documentation in a single column. */
@@ -81,6 +84,7 @@ interface CapabilityDetailViewProps {
 export default function CapabilityDetailView({
   capability,
   platform,
+  backLabel = '资源库',
   onBack,
   onUseInChat,
   onOpenProject,
@@ -129,7 +133,7 @@ export default function CapabilityDetailView({
             className="-ml-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[13px] text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
           >
             <ArrowLeft size={13} strokeWidth={1.8} />
-            资源库
+            {backLabel}
           </button>
           <button
             type="button"

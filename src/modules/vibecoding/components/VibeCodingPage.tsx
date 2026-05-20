@@ -54,7 +54,7 @@ import MarkdownView from './MarkdownView'
 import {
   RESOURCES,
   type Capability,
-  type PrimaryCategory,
+  type NewPrimaryCategory as PrimaryCategory,
   type Resource,
 } from './ResourceLibraryData'
 import {
@@ -1631,6 +1631,157 @@ function PlatformHome({
  *  and a multi-project tree where the expanded project reuses the shared
  *  `FileTreeView` with the workspace's real `fileTree` state. Other projects
  *  are static collapsed stubs. */
+/* ─── Collapsed rail (56px) — icon-only nav with hover tooltips and a
+ *     small logo at the top. Matches Figma node 33120:38743. The
+ *     project-list popover is wired off the bottom icon and reuses the
+ *     same project metadata the expanded sidebar walks. ─── */
+function PlatformCollapsedRail({
+  onExpand,
+  onNewProject,
+  onOpenResourceLibrary,
+  onOpenSkills,
+  onOpenCreativeSquare,
+  activeNav,
+}: {
+  onExpand: () => void
+  onNewProject: () => void
+  onOpenResourceLibrary: () => void
+  onOpenSkills: () => void
+  onOpenCreativeSquare: () => void
+  activeNav: 'Skills' | '资源库' | '创意广场' | null
+}) {
+  const navItems: {
+    label: string
+    icon: LucideIcon
+    onClick: () => void
+    active: boolean
+  }[] = [
+    {
+      label: 'Skills',
+      icon: FolderCode,
+      onClick: onOpenSkills,
+      active: activeNav === 'Skills',
+    },
+    {
+      label: '资源库',
+      icon: Inbox,
+      onClick: onOpenResourceLibrary,
+      active: activeNav === '资源库',
+    },
+    {
+      label: '创意广场',
+      icon: Home,
+      onClick: onOpenCreativeSquare,
+      active: activeNav === '创意广场',
+    },
+  ]
+  return (
+    <aside className="flex h-full w-full flex-col items-center gap-3 pt-6 pb-2">
+      {/* Logo doubles as the expand trigger — default state shows the
+          brand mark, hovering swaps it for the PanelLeft icon (with the
+          black bubble tooltip on the right). */}
+      <div className="group relative">
+        <button
+          type="button"
+          onClick={onExpand}
+          aria-label="展开"
+          className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors text-[var(--color-ink)] hover:bg-[var(--fill-hover)]"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="absolute text-[var(--color-ink)] transition-opacity duration-100 group-hover:opacity-0"
+          >
+            <path d="M7.44609 9.73663C7.44609 11.0199 6.40561 12.0603 5.1235 12.0603C3.84026 12.0603 2.7998 11.0199 2.7998 9.73663C2.7998 8.4534 3.84026 7.41406 5.1235 7.41406C6.40561 7.41406 7.44609 8.4534 7.44609 9.73663Z" fill="currentColor" />
+            <path d="M7.44609 14.3569C7.44609 15.6401 6.40561 16.6795 5.1235 16.6795C3.84026 16.6795 2.7998 15.6401 2.7998 14.3569C2.7998 13.0737 3.84026 12.0332 5.1235 12.0332C6.40561 12.0332 7.44609 13.0737 7.44609 14.3569Z" fill="currentColor" />
+            <path d="M9.3268 7.49279C8.41948 8.40011 7.01315 8.46501 6.18637 7.63824C5.35848 6.81035 5.42338 5.40404 6.3307 4.49672C7.23802 3.58939 8.64436 3.5245 9.47113 4.35239C10.299 5.17916 10.2341 6.58547 9.3268 7.49279Z" fill="currentColor" />
+            <path d="M9.3268 19.5944C8.41948 20.5017 7.01315 20.5666 6.18637 19.7387C5.35848 18.9119 5.42338 17.5056 6.3307 16.5983C7.23802 15.691 8.64436 15.6261 9.47113 16.454C10.299 17.2807 10.2341 18.687 9.3268 19.5944Z" fill="currentColor" />
+            <path d="M19.0487 9.38788C19.956 8.48055 20.8343 7.88761 21.011 8.06438C21.1878 8.24114 20.5949 9.11938 19.6875 10.0267C18.7802 10.934 17.902 11.5259 17.7252 11.3502C17.5496 11.1734 18.1414 10.2952 19.0487 9.38788Z" fill="currentColor" />
+            <path d="M19.1842 14.1724C20.0915 13.2651 20.9093 12.6118 21.0111 12.7136C21.1129 12.8165 20.4607 13.6343 19.5534 14.5416C18.646 15.449 17.8282 16.1012 17.7253 15.9994C17.6235 15.8976 18.2769 15.0798 19.1842 14.1724Z" fill="currentColor" />
+            <path d="M15.8551 5.16021C16.7624 4.25288 17.86 3.8792 18.3063 4.32447C18.7516 4.77086 18.378 5.86838 17.4707 6.77571C16.5633 7.68303 15.4669 8.05671 15.0205 7.61032C14.5741 7.16393 14.9478 6.06753 15.8551 5.16021Z" fill="currentColor" />
+            <path d="M15.978 17.3979C16.8853 16.4906 17.9269 16.0621 18.3062 16.4402C18.6843 16.8184 18.2558 17.8611 17.3485 18.7684C16.4412 19.6757 15.3985 20.1042 15.0203 19.7261C14.6422 19.3468 15.0707 18.3052 15.978 17.3979Z" fill="currentColor" />
+            <path d="M11.1388 18.4303C12.0461 17.523 13.2712 17.278 13.8753 17.8821C14.4806 18.4862 14.2356 19.7124 13.3283 20.6197C12.4209 21.527 11.1947 21.7721 10.5906 21.1679C9.98534 20.5627 10.2315 19.3376 11.1388 18.4303Z" fill="currentColor" />
+            <path d="M11.0509 3.33113C11.9582 2.42381 13.2347 2.22914 13.9026 2.89705C14.5705 3.56496 14.3759 4.84147 13.4686 5.7488C12.5612 6.65612 11.2847 6.84967 10.6168 6.18288C9.94888 5.51498 10.1435 4.23846 11.0509 3.33113Z" fill="currentColor" />
+          </svg>
+          <PanelLeft
+            size={16}
+            strokeWidth={1.8}
+            className="absolute opacity-0 transition-opacity duration-100 group-hover:opacity-100"
+          />
+        </button>
+        <span className="pointer-events-none invisible absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-[#1c1f23] px-2 py-1 text-[12px] text-white opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.2)] transition-opacity duration-100 group-hover:visible group-hover:opacity-100">
+          展开
+        </span>
+      </div>
+      {/* AI 创作 — full circle when the rail is collapsed (Figma). */}
+      <RailTooltipButton
+        label="AI 创作"
+        onClick={onNewProject}
+        className="rounded-full bg-[var(--color-ink)] text-[var(--color-ink-contrast)] hover:opacity-90"
+      >
+        <Plus size={16} strokeWidth={2} />
+      </RailTooltipButton>
+      {/* Nav icons */}
+      <div className="flex flex-col items-center gap-1">
+        {navItems.map((item) => {
+          const Icon = item.icon
+          return (
+            <RailTooltipButton
+              key={item.label}
+              label={item.label}
+              onClick={item.onClick}
+              className={`rounded-lg ${
+                item.active
+                  ? 'bg-[rgba(83,96,143,0.12)] text-[var(--color-ink)]'
+                  : 'text-[var(--color-ink)] hover:bg-[rgba(83,96,143,0.08)]'
+              }`}
+            >
+              <Icon size={16} strokeWidth={1.8} />
+            </RailTooltipButton>
+          )
+        })}
+      </div>
+    </aside>
+  )
+}
+
+/** Square icon button with a hover-revealed black bubble tooltip to its
+ *  right. Used by the collapsed sidebar rail. The caller supplies the
+ *  full visual className (radius, bg, hover…) so overriding the radius
+ *  doesn't need `!important`. */
+function RailTooltipButton({
+  label,
+  onClick,
+  className,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  /** Must include radius + bg/hover utilities. Layout (h-8 w-8 + flex
+   *  centering) is fixed; everything visual is the caller's job. */
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        className={`flex h-8 w-8 items-center justify-center transition-colors ${className ?? ''}`}
+      >
+        {children}
+      </button>
+      <span className="pointer-events-none invisible absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-[#1c1f23] px-2 py-1 text-[12px] text-white opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.2)] transition-opacity duration-100 group-hover:visible group-hover:opacity-100">
+        {label}
+      </span>
+    </div>
+  )
+}
+
 function PlatformSidebar({
   projectTrees,
   expandedDirs,
@@ -2237,7 +2388,9 @@ export default function VibeCodingPage() {
    * the card's top-left header. */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [platformSidebarWidth, setPlatformSidebarWidth] = useState(280)
-  const effectiveSidebarWidth = sidebarCollapsed ? 12 : platformSidebarWidth
+  // Collapsed rail is a fixed 56px icon column (Figma 33120:38743). The
+  // expanded width is user-draggable via the right-edge handle.
+  const effectiveSidebarWidth = sidebarCollapsed ? 56 : platformSidebarWidth
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const onSidebarDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
     sidebarDragRef.current = { startX: e.clientX, startWidth: platformSidebarWidth }
@@ -2373,6 +2526,12 @@ export default function VibeCodingPage() {
    *  platform home / landing screen. */
   const handleNewProject = () => {
     handleNewSession()
+    // Switching to the AI 创作 home must close every other platform
+    // page (资源库 / Skills / 创意广场) so the two views don't stack
+    // side-by-side.
+    setPlatformResourceLibraryOpen(false)
+    setPlatformSkillsOpen(false)
+    setPlatformCreativeSquareOpen(false)
     setPlatformHomeOpen(true)
   }
 
@@ -2996,7 +3155,7 @@ export default function VibeCodingPage() {
     platformSkillsOpen ||
     platformCreativeSquareOpen
   const [resourceLibraryPrimary, setResourceLibraryPrimary] =
-    useState<PrimaryCategory | null>('官方')
+    useState<PrimaryCategory | null>('抖音')
   const [resourceLibrarySecondary, setResourceLibrarySecondary] = useState<
     string | null
   >(null)
@@ -3007,13 +3166,13 @@ export default function VibeCodingPage() {
     Set<PrimaryCategory>
   >(
     () =>
-      new Set([
-        '业务平台',
-        '舆情监控',
-        '内容理解与生成',
+      new Set<PrimaryCategory>([
+        '抖音',
+        '灵感创作',
         '数据分析和处理',
-        '开发和效率',
-        '官方引入',
+        '开发工具',
+        '安全审核',
+        '办公效率',
       ]),
   )
   const [resourceLibrarySearch, setResourceLibrarySearch] = useState('')
@@ -3035,10 +3194,87 @@ export default function VibeCodingPage() {
       return next
     })
   }
+  // Skills page mirrors the resource library — same UI, but
+  // `kind="skill"` so the shared ResourceLibraryView only shows
+  // capabilities of type 'skill'. State is independent from the
+  // resource-library tab so each page remembers its own navigation.
+  const [skillsLibraryPrimary, setSkillsLibraryPrimary] =
+    useState<PrimaryCategory | null>('抖音')
+  const [skillsLibrarySecondary, setSkillsLibrarySecondary] = useState<
+    string | null
+  >(null)
+  const [skillsLibraryCapability, setSkillsLibraryCapability] = useState<
+    { platformId: string; name: string; category: string | null } | null
+  >(null)
+  const [skillsLibraryExpanded, setSkillsLibraryExpanded] = useState<
+    Set<PrimaryCategory>
+  >(
+    () =>
+      new Set<PrimaryCategory>([
+        '抖音',
+        '灵感创作',
+        '数据分析和处理',
+        '开发工具',
+        '安全审核',
+        '办公效率',
+      ]),
+  )
+  const [skillsLibrarySearch, setSkillsLibrarySearch] = useState('')
+  const [skillsLibraryTypeFilter, setSkillsLibraryTypeFilter] = useState<
+    ResourceLibraryTypeFilter
+  >('skill-tool')
+  const toggleSkillsLibraryExpanded = (primary: PrimaryCategory) => {
+    setSkillsLibraryExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(primary)) next.delete(primary)
+      else next.add(primary)
+      return next
+    })
+  }
+  // Each ResourceLibraryView mount has its own internal state (scene
+  // chip, layout, sceneMode, sourceFilter, visibleCounts, scrollTop…).
+  // Bumping these counters on every page entry forces React to remount
+  // the component, so switching pages feels like a real reload (not
+  // just a data refresh inside the same view).
+  const [resourceLibraryMountKey, setResourceLibraryMountKey] = useState(0)
+  const [skillsLibraryMountKey, setSkillsLibraryMountKey] = useState(0)
+  // Resets are folded into the open* handlers below so they fire in the
+  // same render as setPlatform*Open(true). Doing them in a useEffect
+  // post-mount caused the cards pane to paint once with stale state
+  // before remounting under the new key — the visible 抖动 the user
+  // reported when toggling between 资源库 ↔ Skills.
+  const DEFAULT_PRIMARY_EXPANDED = (): Set<PrimaryCategory> =>
+    new Set<PrimaryCategory>([
+      '抖音',
+      '灵感创作',
+      '数据分析和处理',
+      '开发工具',
+      '安全审核',
+      '办公效率',
+    ])
+  const resetResourceLibraryState = () => {
+    setResourceLibraryPrimary('抖音')
+    setResourceLibrarySecondary(null)
+    setResourceLibraryCapability(null)
+    setResourceLibraryExpanded(DEFAULT_PRIMARY_EXPANDED())
+    setResourceLibrarySearch('')
+    setResourceLibraryTypeFilter('skill-tool')
+    setResourceLibraryMountKey((k) => k + 1)
+  }
+  const resetSkillsLibraryState = () => {
+    setSkillsLibraryPrimary('抖音')
+    setSkillsLibrarySecondary(null)
+    setSkillsLibraryCapability(null)
+    setSkillsLibraryExpanded(DEFAULT_PRIMARY_EXPANDED())
+    setSkillsLibrarySearch('')
+    setSkillsLibraryTypeFilter('skill-tool')
+    setSkillsLibraryMountKey((k) => k + 1)
+  }
   const openResourceLibraryPage = () => {
     setPlatformHomeOpen(false)
     setPlatformSkillsOpen(false)
     setPlatformCreativeSquareOpen(false)
+    resetResourceLibraryState()
     setPlatformResourceLibraryOpen(true)
   }
 
@@ -3053,6 +3289,7 @@ export default function VibeCodingPage() {
         setPlatformHomeOpen(false)
         setPlatformSkillsOpen(false)
         setPlatformCreativeSquareOpen(false)
+        resetResourceLibraryState()
         setPlatformResourceLibraryOpen(true)
       }
     }
@@ -3085,6 +3322,7 @@ export default function VibeCodingPage() {
     setPlatformHomeOpen(false)
     setPlatformResourceLibraryOpen(false)
     setPlatformCreativeSquareOpen(false)
+    resetSkillsLibraryState()
     setPlatformSkillsOpen(true)
   }
   const openPlatformCreativeSquarePage = () => {
@@ -4292,6 +4530,30 @@ export default function VibeCodingPage() {
         </div>
       )}
 
+      {/* ── Collapsed rail — 56px icon-only sidebar (Figma 33120:38743).
+           Hover bubble tooltips on each icon; click logo/expand → expand
+           the sidebar back to its previous width. ── */}
+      {isPlatform && sidebarCollapsed && (
+        <div className="fixed inset-y-0 left-0 z-40 w-14">
+          <PlatformCollapsedRail
+            onExpand={() => setSidebarCollapsed(false)}
+            onNewProject={handleNewProject}
+            onOpenResourceLibrary={openResourceLibraryPage}
+            onOpenSkills={openPlatformSkillsPage}
+            onOpenCreativeSquare={openPlatformCreativeSquarePage}
+            activeNav={
+              platformResourceLibraryOpen
+                ? '资源库'
+                : platformSkillsOpen
+                  ? 'Skills'
+                  : platformCreativeSquareOpen
+                    ? '创意广场'
+                    : null
+            }
+          />
+        </div>
+      )}
+
       {/* ── Platform layout: shared white card frame behind chat + preview.
            Lives below body content (z) so chat aside (z-30) and preview
            (inside body z-10) paint on top. Provides rounded/ring/bg so the
@@ -4381,9 +4643,11 @@ export default function VibeCodingPage() {
               <ArrowLeft size={15} strokeWidth={1.8} />
             </GlassIconButton>
           )}
-          {/* Platform + sidebar collapsed: relocate the brand SVG and an
-               expand button into the card's top-left header. */}
-          {isPlatform && sidebarCollapsed && (
+          {/* Platform + sidebar collapsed: the rail to the left owns the
+               brand logo + expand button now, so the top header stays
+               focused on the project title. Block kept disabled in case
+               we need to relocate brand chrome back later. */}
+          {false && isPlatform && sidebarCollapsed && (
             <>
               <svg
                 width="108"
@@ -6729,6 +6993,8 @@ export default function VibeCodingPage() {
         {isPlatform && platformResourceLibraryOpen && (
           <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
             <ResourceLibraryView
+              key={resourceLibraryMountKey}
+              kind="tool"
               selectedPrimary={resourceLibraryPrimary}
               selectedSecondary={resourceLibrarySecondary}
               selectedCapability={resourceLibraryCapability}
@@ -6761,10 +7027,35 @@ export default function VibeCodingPage() {
 
         {isPlatform && platformSkillsOpen && (
           <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
-            <PlatformPlaceholderView
-              icon={FolderCode}
-              title="Skills"
-              description="个人 Skill 工作台 — 在这里管理你创建的能力，发布到资源库供团队复用。"
+            <ResourceLibraryView
+              key={skillsLibraryMountKey}
+              kind="skill"
+              selectedPrimary={skillsLibraryPrimary}
+              selectedSecondary={skillsLibrarySecondary}
+              selectedCapability={skillsLibraryCapability}
+              expandedPrimary={skillsLibraryExpanded}
+              searchQuery={skillsLibrarySearch}
+              typeFilter={skillsLibraryTypeFilter}
+              onTogglePrimary={toggleSkillsLibraryExpanded}
+              onSelectCategory={(p, s) => {
+                setSkillsLibraryPrimary(p)
+                setSkillsLibrarySecondary(s)
+                setSkillsLibraryCapability(null)
+              }}
+              onSelectCapability={setSkillsLibraryCapability}
+              onSearchChange={setSkillsLibrarySearch}
+              onTypeFilterChange={setSkillsLibraryTypeFilter}
+              onUseCapabilityInChat={useCapabilityInChat}
+              onOpenProject={(name) => {
+                setProjectTitle(name)
+                handleNewSession()
+                setPlatformHomeOpen(false)
+                setPlatformResourceLibraryOpen(false)
+                setSkillsLibraryCapability(null)
+                setPlatformSkillsOpen(false)
+                setPlatformCreativeSquareOpen(false)
+                setActivePreviewTab(0)
+              }}
             />
           </div>
         )}

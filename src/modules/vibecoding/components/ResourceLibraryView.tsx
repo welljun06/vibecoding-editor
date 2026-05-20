@@ -20,21 +20,34 @@ import EmptySearchMark from './icons/EmptySearchMark'
 import {
   CAPABILITY_LABEL,
   CAPABILITY_TAGS,
-  OFFICIAL_DOMAINS,
-  PRIMARY_CATEGORIES,
+  NEW_PRIMARY_CATEGORIES,
+  NEW_SECONDARIES_BY_PRIMARY,
   RESOURCES,
   SCENE_TAGS,
-  buildCategoryTree,
-  inferCapabilityTag,
+  buildCapabilityTree,
+  inferCapabilityPrimaryForResource,
+  inferCapabilitySecondary,
   inferSceneTag,
 } from './ResourceLibraryData'
+// Aliases for back-compat with the previous platform-centric tree.
+const inferCapabilityTag = inferCapabilitySecondary
+// External-mode bucket logic referenced the old aggregator subset of
+// primaries. With the new capability-centric taxonomy these don't
+// exist; keep an empty array so the conditional branches no-op
+// cleanly without removing all the external-mode rendering blocks.
+const OFFICIAL_DOMAINS: readonly string[] = []
 import type {
   Capability,
   CapabilityTag,
-  PrimaryCategory,
+  NewPrimaryCategory,
   Resource,
   SceneTag,
 } from './ResourceLibraryData'
+
+// Bridge alias — many callsites still reference `PrimaryCategory` as
+// the type for selectedPrimary/selectedSecondary etc. The view's tree
+// now uses the new capability-centric taxonomy.
+type PrimaryCategory = NewPrimaryCategory
 
 /** Two card layouts the user can switch between via the top-right
  *  layout select. Both render the banner-style RichCapabilityCard; the
@@ -66,20 +79,29 @@ export type SceneMode =
   | 'external-row'
   | 'external-flat'
 
-type SourceFilter = 'all' | 'official' | 'thirdParty' | 'space'
+type SourceFilter = 'all' | 'official' | 'thirdParty'
 
+// `id: 'all'` doubles as the dropdown's resting state — when selected
+// the trigger displays its `来源` placeholder. Matches the SORT_OPTIONS
+// pattern used by FilterDropdown elsewhere on this row.
 const SOURCE_FILTER_OPTIONS: { id: SourceFilter; label: string }[] = [
-  { id: 'all', label: '全部' },
+  { id: 'all', label: '来源' },
   { id: 'official', label: '官方' },
   { id: 'thirdParty', label: '三方' },
-  { id: 'space', label: '空间' },
 ]
 
-const SOURCE_FILTER_LABEL: Record<SourceFilter, string> = {
-  all: '全部',
+const SOURCE_FILTER_LABEL: Record<'official' | 'thirdParty' | 'space', string> = {
   official: '官方',
   thirdParty: '三方',
   space: '空间',
+}
+
+/** Map a resource to its 来源 bucket — drives both the search-row
+ *  dropdown and the external-flat variant's per-source grouping. */
+function getResourceSource(r: Resource): 'official' | 'thirdParty' | 'space' {
+  if (r.primaryCategory === '官方引入') return 'thirdParty'
+  if (r.primaryCategory === '空间') return 'space'
+  return 'official'
 }
 
 /** Top-level resource section. `skill-tool` and `knowledge` show
@@ -100,6 +122,13 @@ export interface CapabilityRef {
 }
 
 interface ResourceLibraryViewProps {
+  /** Which capability kind this view is dedicated to. The shared
+   *  ResourceLibraryView component now serves two pages:
+   *  - `tool` — the 资源库 tab (MCP / 外部能力库)
+   *  - `skill` — the left-nav Skills page (AI Skill 工作台)
+   *  All capability-level filtering applies this as an additional
+   *  constraint on top of the type-tab filter. */
+  kind: 'tool' | 'skill'
   selectedPrimary: PrimaryCategory | null
   selectedSecondary: string | null
   selectedCapability: CapabilityRef | null
@@ -117,8 +146,10 @@ interface ResourceLibraryViewProps {
   onOpenProject: (projectName: string) => void
 }
 
-const TYPE_TABS: { id: TypeFilter; label: string }[] = [
-  { id: 'skill-tool', label: 'Skills / 工具' },
+const buildTypeTabs = (
+  kind: 'tool' | 'skill',
+): { id: TypeFilter; label: string }[] => [
+  { id: 'skill-tool', label: kind === 'skill' ? 'Skills' : '工具' },
   { id: 'knowledge', label: CAPABILITY_LABEL.knowledge },
   { id: 'model', label: '模型' },
   { id: 'publisher', label: '发布器' },
@@ -155,7 +186,8 @@ const COMBINED_TAGS: CombinedTag[] = (() => {
   }
   return out
 })()
-const SCENE_OPTIONS = [
+// @ts-expect-error — kept for future scene-filter UI; not wired yet.
+const _SCENE_OPTIONS = [
   { id: 'all', label: '全部' },
   ...COMBINED_TAGS.map((t) => ({ id: t, label: t })),
 ] as { id: 'all' | CombinedTag; label: string }[]
@@ -167,9 +199,13 @@ const SORT_OPTIONS = [
   { id: 'created', label: '最近创建' },
 ] as const
 
-const PER_PLATFORM_PREVIEW_LIMIT = 20
+/** Initial number of cards rendered per group, and the increment when
+ *  the user clicks the per-group "加载更多" button. Each group tracks
+ *  its own visible count in `visibleCounts` state. */
+const GROUP_PAGE_SIZE = 20
 
 export default function ResourceLibraryView({
+  kind,
   selectedPrimary,
   selectedSecondary,
   selectedCapability,
@@ -184,7 +220,9 @@ export default function ResourceLibraryView({
   onUseCapabilityInChat,
   onOpenProject,
 }: ResourceLibraryViewProps) {
-  const tree = useMemo(() => buildCategoryTree(), [])
+  const tree = useMemo(() => buildCapabilityTree(kind), [kind])
+  const typeTabs = useMemo(() => buildTypeTabs(kind), [kind])
+  const pageTitle = kind === 'skill' ? 'Skills' : '资源库'
 
   // Single 场景 dimension that merges the previous scene + capability
   // pools. A capability matches when its inferred scene OR capability
@@ -195,6 +233,19 @@ export default function ResourceLibraryView({
   const [onlyMine, setOnlyMine] = useState(false)
   const [cardLayout, setCardLayout] = useState<CardLayout>('compact')
   const [sceneMode, setSceneMode] = useState<SceneMode>('internal')
+  // Per-group pagination — each group has a unique key (platform id for
+  // internal-mode platform groups, bucket id for external variants).
+  // Default visible count is GROUP_PAGE_SIZE; clicking "加载更多"
+  // appends another page worth. Stays local to the component so each
+  // page (tool / skill) maintains its own expansion.
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
+  const getVisibleCount = (key: string) => visibleCounts[key] ?? GROUP_PAGE_SIZE
+  const loadMore = (key: string) => {
+    setVisibleCounts((prev) => ({
+      ...prev,
+      [key]: (prev[key] ?? GROUP_PAGE_SIZE) + GROUP_PAGE_SIZE,
+    }))
+  }
   // 来源 filter — only surfaced in the `external-flat` variant. Values:
   // 全部 / 官方 / 三方 / 空间. Cards in flat mode group by source; this
   // narrows which source headers are rendered (and which cards survive).
@@ -227,6 +278,7 @@ export default function ResourceLibraryView({
     return () => ro.disconnect()
   }, [])
 
+
   // Active tab in 外场·Tab mode — derived from IntersectionObserver on
   // each bucket section. The first section whose top edge has crossed
   // above the sticky chrome (filter row + tabs strip) wins.
@@ -255,49 +307,58 @@ export default function ResourceLibraryView({
   const filterRowRef = useRef<HTMLDivElement>(null)
 
   const treeCountMap = useMemo(() => {
-    // Count capabilities that pass the same filters as the right pane so
-    // the tree badges match what the user actually sees in the cards.
+    // Count capabilities that pass the same filters as the right pane,
+    // keyed by the NEW (primary, secondary) inferred from the capability
+    // name. The tree badges match what the user actually sees in the
+    // cards. The map key uses the new primary so the tree's row identity
+    // lines up.
     const q = searchQuery.trim().toLowerCase()
     const m = new Map<string, number>()
     for (const r of RESOURCES) {
-      const matched = r.capabilities.filter((c) => {
-        if (typeFilter === 'skill-tool' && c.type !== 'skill' && c.type !== 'tool') return false
-        if (typeFilter === 'knowledge' && c.type !== 'knowledge') return false
+      if (sourceFilter !== 'all' && getResourceSource(r) !== sourceFilter) continue
+      for (const c of r.capabilities) {
+        if (typeFilter === 'skill-tool' && c.type !== kind) continue
+        if (typeFilter === 'knowledge' && c.type !== 'knowledge') continue
         if (
           scene !== 'all' &&
           inferSceneTag(c.name) !== scene &&
-          inferCapabilityTag(c.name) !== scene
+          inferCapabilitySecondary(c.name) !== scene
         )
-          return false
+          continue
         if (q) {
           const hay = [c.name, c.category ?? '', r.name].join(' ').toLowerCase()
-          if (!hay.includes(q)) return false
+          if (!hay.includes(q)) continue
         }
-        return true
-      }).length
-      const k = `${r.primaryCategory}::${r.secondaryCategory}`
-      // Always seed the key — even with 0 — so the tree can tell apart
-      // "this secondary intrinsically has resources but the filter
-      // zeroed it" (key present, value 0) from "this secondary has no
-      // resources at all yet" (key absent, see `intrinsicCountMap`).
-      m.set(k, (m.get(k) ?? 0) + matched)
+        const primary = inferCapabilityPrimaryForResource(c.name, r)
+        const secondary = inferCapabilitySecondary(c.name)
+        const key = `${primary}::${secondary}`
+        m.set(key, (m.get(key) ?? 0) + 1)
+      }
     }
     return m
-  }, [searchQuery, scene, typeFilter])
+  }, [searchQuery, scene, typeFilter, kind, sourceFilter])
 
-  // Unfiltered intrinsic counts — a secondary appears here only if its
-  // platform actually ships any capabilities in the data. Used by the
-  // tree to decide whether a zero badge reads as "0" (the filter
-  // zeroed a real category) or "待接入" (the category itself is empty).
+  // Unfiltered intrinsic counts — a secondary appears here only if any
+  // capability of the current kind/typeFilter actually maps to it.
+  // Drives the "待接入" vs "0" distinction in the tree badges. Source
+  // filter is included so toggling 来源 reshuffles the 0-vs-待接入
+  // signal too (a secondary with only 三方 resources should read
+  // "待接入" once the user narrows to 官方).
   const intrinsicCountMap = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of RESOURCES) {
-      if (r.capabilities.length === 0) continue
-      const k = `${r.primaryCategory}::${r.secondaryCategory}`
-      m.set(k, (m.get(k) ?? 0) + r.capabilities.length)
+      if (sourceFilter !== 'all' && getResourceSource(r) !== sourceFilter) continue
+      for (const c of r.capabilities) {
+        if (typeFilter === 'skill-tool' && c.type !== kind) continue
+        if (typeFilter === 'knowledge' && c.type !== 'knowledge') continue
+        const primary = inferCapabilityPrimaryForResource(c.name, r)
+        const secondary = inferCapabilitySecondary(c.name)
+        const key = `${primary}::${secondary}`
+        m.set(key, (m.get(key) ?? 0) + 1)
+      }
     }
     return m
-  }, [])
+  }, [kind, typeFilter, sourceFilter])
 
   // Anchor-style navigation: the tree no longer narrows the dataset —
   // every resource stays in scope and tree clicks scroll the right
@@ -306,35 +367,63 @@ export default function ResourceLibraryView({
   const platformsInScope = RESOURCES
 
   // 官方 has no own resources, so the tree row needs an explicit total
-  // computed from the aggregator subset. Derive from the (already
-  // filtered) treeCountMap so the badge tracks the right pane.
-  const officialTotal = useMemo(() => {
-    let total = 0
-    for (const [key, count] of treeCountMap) {
-      const primary = key.split('::')[0] as PrimaryCategory
-      if (OFFICIAL_DOMAINS.includes(primary)) total += count
-    }
-    return total
-  }, [treeCountMap])
+  // 官方 aggregator is gone in the new taxonomy — these computations
+  // are kept as no-ops to preserve dependent code paths (external mode
+  // bucket logic etc.) without removing them outright.
+  void treeCountMap
+  void intrinsicCountMap
 
-  // Unfiltered intrinsic total for 官方 — used to decide whether the
-  // aggregator's zero badge reads as "0" (filter zeroed real domains)
-  // or "待接入" (the whole aggregator genuinely has nothing yet).
-  const officialIntrinsicTotal = useMemo(() => {
-    let total = 0
-    for (const [key, count] of intrinsicCountMap) {
-      const primary = key.split('::')[0] as PrimaryCategory
-      if (OFFICIAL_DOMAINS.includes(primary)) total += count
+  // Capability-centric sections for the internal-mode right pane. Each
+  // section is one new (primary → secondary) bucket; only sections with
+  // ≥1 matching capability survive. Capability filtering mirrors the
+  // tree-count logic (same kind / typeFilter / scene / search rules).
+  const sectionGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const out = new Map<
+      string,
+      {
+        primary: PrimaryCategory
+        secondary: string
+        caps: { cap: Capability; platform: Resource }[]
+      }
+    >()
+    for (const r of RESOURCES) {
+      if (sourceFilter !== 'all' && getResourceSource(r) !== sourceFilter) continue
+      for (const c of r.capabilities) {
+        if (typeFilter === 'skill-tool' && c.type !== kind) continue
+        if (typeFilter === 'knowledge' && c.type !== 'knowledge') continue
+        if (
+          scene !== 'all' &&
+          inferSceneTag(c.name) !== scene &&
+          inferCapabilitySecondary(c.name) !== scene
+        )
+          continue
+        if (q) {
+          const hay = [c.name, c.category ?? '', r.name].join(' ').toLowerCase()
+          if (!hay.includes(q)) continue
+        }
+        const primary = inferCapabilityPrimaryForResource(c.name, r)
+        const secondary = inferCapabilitySecondary(c.name)
+        const key = `${primary}::${secondary}`
+        let entry = out.get(key)
+        if (!entry) {
+          entry = { primary, secondary, caps: [] }
+          out.set(key, entry)
+        }
+        entry.caps.push({ cap: c, platform: r })
+      }
     }
-    return total
-  }, [intrinsicCountMap])
+    return out
+  }, [searchQuery, scene, typeFilter, kind, sourceFilter])
 
   const groups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     const out: { platform: Resource; caps: Capability[]; total: number }[] = []
     for (const platform of platformsInScope) {
+      if (sourceFilter !== 'all' && getResourceSource(platform) !== sourceFilter)
+        continue
       const matches = platform.capabilities.filter((c) => {
-        if (typeFilter === 'skill-tool' && c.type !== 'skill' && c.type !== 'tool') return false
+        if (typeFilter === 'skill-tool' && c.type !== kind) return false
         if (typeFilter === 'knowledge' && c.type !== 'knowledge') return false
         if (
           scene !== 'all' &&
@@ -353,7 +442,7 @@ export default function ResourceLibraryView({
       }
     }
     return out
-  }, [platformsInScope, typeFilter, searchQuery, scene])
+  }, [platformsInScope, typeFilter, searchQuery, scene, kind, sourceFilter])
 
   // Only search / tag filter narrow the displayed cards. Tree selection
   // is navigation-only — it scrolls to the matching anchor but still
@@ -470,10 +559,8 @@ export default function ResourceLibraryView({
     // Block the scroll-spy handler for the duration of the smooth scroll
     // so it doesn't fight the click target with sections we pass through.
     programmaticScrollUntil.current = Date.now() + 700
-    if (selectedPrimary === '官方' && !selectedSecondary) {
-      container.scrollTo({ top: 0, behavior: 'smooth' })
-      return
-    }
+    // (Old: 官方 aggregator scrolled to top. No equivalent in the new
+    // taxonomy.)
     // Prefer the secondary anchor; fall back to the primary section
     // when the secondary doesn't exist on the right (e.g. 待接入 leaves
     // whose platform has no capabilities and therefore no rendered
@@ -526,6 +613,7 @@ export default function ResourceLibraryView({
         <CapabilityDetailView
           capability={capability}
           platform={platform}
+          backLabel={pageTitle}
           onBack={() => onSelectCapability(null)}
           onUseInChat={() => onUseCapabilityInChat(platform, capability)}
           onOpenProject={onOpenProject}
@@ -542,10 +630,13 @@ export default function ResourceLibraryView({
            underline lines up with the container's bottom border. ── */}
       <div className="relative flex shrink-0 items-baseline gap-6 border-b border-[var(--divider-soft)] px-6 pt-5">
         <h1 className="shrink-0 pb-3 text-[20px] font-semibold leading-[1.2] text-[var(--color-ink)]">
-          资源库
+          {pageTitle}
         </h1>
+        {/* Skills page only has one kind — no need for the 知识库 / 模型 /
+            发布器 tabs (those belong to the 资源库 / tool ecosystem). */}
+        {kind !== 'skill' && (
         <div className="flex items-baseline gap-6">
-          {TYPE_TABS.map((t) => {
+          {typeTabs.map((t) => {
             const active = typeFilter === t.id
             return (
               <button
@@ -566,6 +657,7 @@ export default function ResourceLibraryView({
             )
           })}
         </div>
+        )}
         {/* Scene mode + Layout toggle float absolutely so they don't grow
             the tabs row vertically. Anchored to the row's bottom edge so
             they line up with the active-tab underline. */}
@@ -594,11 +686,10 @@ export default function ResourceLibraryView({
               onTogglePrimary={onTogglePrimary}
               selectedPrimary={selectedPrimary}
               selectedSecondary={selectedSecondary}
-              officialTotal={officialTotal}
-              officialIntrinsicTotal={officialIntrinsicTotal}
               onSelect={(p, s) => onSelectCategory(p, s)}
               countMap={treeCountMap}
               intrinsicCountMap={intrinsicCountMap}
+              isFiltering={isFiltering}
             />
           </div>
         </div>
@@ -631,6 +722,12 @@ export default function ResourceLibraryView({
                   />
                 </div>
 
+                <FilterDropdown
+                  label="来源"
+                  value={sourceFilter}
+                  options={SOURCE_FILTER_OPTIONS}
+                  onChange={(id) => setSourceFilter(id as SourceFilter)}
+                />
                 <CheckboxFilter
                   label="我创建的"
                   checked={onlyMine}
@@ -646,23 +743,6 @@ export default function ResourceLibraryView({
 
               <CreateButton />
             </div>
-
-
-            {sceneMode === 'external-flat' && (
-              <ChipFilterRow
-                label="来源"
-                value={sourceFilter}
-                options={SOURCE_FILTER_OPTIONS}
-                onChange={(id) => setSourceFilter(id as SourceFilter)}
-              />
-            )}
-            <ChipFilterRow
-              label="场景"
-              value={scene}
-              options={SCENE_OPTIONS}
-              onChange={(id) => setScene(id as 'all' | CombinedTag)}
-              collapsible
-            />
           </div>
         </div>
 
@@ -682,7 +762,7 @@ export default function ResourceLibraryView({
               selectedSecondary={selectedSecondary}
               onReset={() => {
                 setScene('all')
-                onSelectCategory('官方', null)
+                onSelectCategory('抖音', null)
                 onSearchChange('')
               }}
             />
@@ -711,15 +791,24 @@ export default function ResourceLibraryView({
               const officialTotal = officialGroups.reduce((s, g) => s + g.total, 0)
               const thirdPartyTotal = thirdPartyGroups.reduce((s, g) => s + g.total, 0)
               const spaceTotal = spaceGroups.reduce((s, g) => s + g.total, 0)
-              const officialCaps = officialGroups
-                .flatMap((g) => g.caps.map((cap) => ({ cap, platform: g.platform })))
-                .slice(0, PER_PLATFORM_PREVIEW_LIMIT)
-              const thirdPartyCaps = thirdPartyGroups
-                .flatMap((g) => g.caps.map((cap) => ({ cap, platform: g.platform })))
-                .slice(0, PER_PLATFORM_PREVIEW_LIMIT)
-              const spaceCaps = spaceGroups
-                .flatMap((g) => g.caps.map((cap) => ({ cap, platform: g.platform })))
-                .slice(0, PER_PLATFORM_PREVIEW_LIMIT)
+              // Flatten + paginate per bucket — visibleCounts is local
+              // state, the LoadMoreButton at the bottom of each grid
+              // bumps the count by GROUP_PAGE_SIZE.
+              const officialAll = officialGroups.flatMap((g) =>
+                g.caps.map((cap) => ({ cap, platform: g.platform })),
+              )
+              const thirdPartyAll = thirdPartyGroups.flatMap((g) =>
+                g.caps.map((cap) => ({ cap, platform: g.platform })),
+              )
+              const spaceAll = spaceGroups.flatMap((g) =>
+                g.caps.map((cap) => ({ cap, platform: g.platform })),
+              )
+              const officialVisible = getVisibleCount('bucket-official')
+              const thirdPartyVisible = getVisibleCount('bucket-thirdParty')
+              const spaceVisible = getVisibleCount('bucket-space')
+              const officialCaps = officialAll.slice(0, officialVisible)
+              const thirdPartyCaps = thirdPartyAll.slice(0, thirdPartyVisible)
+              const spaceCaps = spaceAll.slice(0, spaceVisible)
               const officialCollapsed = collapsedExternal.has('official')
               const thirdPartyCollapsed = collapsedExternal.has('thirdParty')
               const spaceCollapsed = collapsedExternal.has('space')
@@ -818,32 +907,41 @@ export default function ResourceLibraryView({
                       </div>
                     </div>
                     <div className="flex flex-col gap-8 px-6 pt-5 pb-10">
-                      {tabs.map((t) => (
-                        <section
-                          key={t.id}
-                          id={`external-bucket-${t.id}`}
-                          className="flex flex-col gap-3 scroll-mt-4"
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
-                              {t.label}
-                            </span>
-                            <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
-                              {t.total}
-                            </span>
-                          </div>
-                          {t.caps.length > 0 && renderCards(t.caps, t.prefix)}
-                        </section>
-                      ))}
+                      {tabs.map((t) => {
+                        const remaining = t.total - t.caps.length
+                        return (
+                          <section
+                            key={t.id}
+                            id={`external-bucket-${t.id}`}
+                            className="flex flex-col gap-3 scroll-mt-4"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
+                                {t.label}
+                              </span>
+                              <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+                                {t.total}
+                              </span>
+                            </div>
+                            {t.caps.length > 0 && renderCards(t.caps, t.prefix)}
+                            {remaining > 0 && (
+                              <LoadMoreButton
+                                remaining={remaining}
+                                onClick={() => loadMore(`bucket-${t.id}`)}
+                              />
+                            )}
+                          </section>
+                        )
+                      })}
                     </div>
                   </>
                 )
               }
 
-              /* ─── Flat variant — 来源 chip row at the top of the filter
-               *      bar (rendered upstream) gates which source(s) of
-               *      cards show up; the grid below is a flat tiled list
-               *      grouped by source using internal-mode header style. */
+              /* ─── Flat variant — `groups` is already pre-filtered by
+               *      the search-row 来源 dropdown, so this branch just
+               *      renders whichever source buckets still have cards.
+               *      Internal-mode header style per source. */
               if (sceneMode === 'external-flat') {
                 type SourceKey = 'official' | 'thirdParty' | 'space'
                 const sourceList: {
@@ -856,26 +954,31 @@ export default function ResourceLibraryView({
                   { key: 'thirdParty', label: SOURCE_FILTER_LABEL.thirdParty, total: thirdPartyTotal, caps: thirdPartyCaps },
                   { key: 'space', label: SOURCE_FILTER_LABEL.space, total: spaceTotal, caps: spaceCaps },
                 ]
-                const visibleSources = sourceList.filter((s) => {
-                  if (s.total === 0) return false
-                  if (sourceFilter === 'all') return true
-                  return s.key === sourceFilter
-                })
+                const visibleSources = sourceList.filter((s) => s.total > 0)
                 return (
                   <div className="flex flex-col gap-8 px-6 pt-5 pb-10">
-                    {visibleSources.map((s) => (
-                      <section key={s.key} className="flex flex-col gap-3">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
-                            {s.label}
-                          </span>
-                          <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
-                            {s.total}
-                          </span>
-                        </div>
-                        {s.caps.length > 0 && renderCards(s.caps, s.key)}
-                      </section>
-                    ))}
+                    {visibleSources.map((s) => {
+                      const remaining = s.total - s.caps.length
+                      return (
+                        <section key={s.key} className="flex flex-col gap-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
+                              {s.label}
+                            </span>
+                            <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+                              {s.total}
+                            </span>
+                          </div>
+                          {s.caps.length > 0 && renderCards(s.caps, s.key)}
+                          {remaining > 0 && (
+                            <LoadMoreButton
+                              remaining={remaining}
+                              onClick={() => loadMore(`bucket-${s.key}`)}
+                            />
+                          )}
+                        </section>
+                      )
+                    })}
                   </div>
                 )
               }
@@ -916,39 +1019,48 @@ export default function ResourceLibraryView({
                 return (
                   <>
                     <div className="flex flex-col px-6 pt-5 pb-10">
-                      {buckets.map((b, i) => (
-                        <section
-                          key={b.id}
-                          id={`external-bucket-${b.id}`}
-                          className={`flex flex-col gap-3 scroll-mt-4 ${i > 0 ? 'pt-6' : ''}`}
-                        >
-                          <div
-                            ref={(el) => {
-                              externalRowHeaderRefs.current[b.id] = el
-                            }}
-                            className="sticky z-[5] -mx-6 bg-white px-6 py-2"
-                            style={{ top: filterHeight }}
+                      {buckets.map((b, i) => {
+                        const remaining = b.total - b.caps.length
+                        return (
+                          <section
+                            key={b.id}
+                            id={`external-bucket-${b.id}`}
+                            className={`flex flex-col gap-3 scroll-mt-4 ${i > 0 ? 'pt-6' : ''}`}
                           >
                             <div
-                              aria-hidden
-                              className="pointer-events-none absolute inset-x-0 top-full h-4"
-                              style={{
-                                backgroundImage:
-                                  'linear-gradient(to bottom, rgba(255,255,255,1) 0%, rgba(255,255,255,0.92) 25%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0.32) 75%, rgba(255,255,255,0) 100%)',
+                              ref={(el) => {
+                                externalRowHeaderRefs.current[b.id] = el
                               }}
-                            />
-                            <div className="flex w-full items-center gap-2">
-                              <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
-                                {b.label}
-                              </span>
-                              <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
-                                {b.total}
-                              </span>
+                              className="sticky z-[5] -mx-6 bg-white px-6 py-2"
+                              style={{ top: filterHeight }}
+                            >
+                              <div
+                                aria-hidden
+                                className="pointer-events-none absolute inset-x-0 top-full h-4"
+                                style={{
+                                  backgroundImage:
+                                    'linear-gradient(to bottom, rgba(255,255,255,1) 0%, rgba(255,255,255,0.92) 25%, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0.32) 75%, rgba(255,255,255,0) 100%)',
+                                }}
+                              />
+                              <div className="flex w-full items-center gap-2">
+                                <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
+                                  {b.label}
+                                </span>
+                                <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+                                  {b.total}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                          {b.caps.length > 0 && renderCards(b.caps, b.prefix)}
-                        </section>
-                      ))}
+                            {b.caps.length > 0 && renderCards(b.caps, b.prefix)}
+                            {remaining > 0 && (
+                              <LoadMoreButton
+                                remaining={remaining}
+                                onClick={() => loadMore(`bucket-${b.id}`)}
+                              />
+                            )}
+                          </section>
+                        )
+                      })}
                     </div>
                     {/* Floating bottom row — sticky bottom: 0, full-width
                         bar matching the old sticky-section header style
@@ -1001,14 +1113,9 @@ export default function ResourceLibraryView({
                 )
               }
 
-              /* ─── Sticky-stack variant — sticky-section headers, each
-               *      bucket has its own scroll behaviour. Header height
-               *      matches the rendered .py-2 (16) + 22px line-height
-               *      = 38px; 三方 stacks at the bottom edge ABOVE 空间 by
-               *      this offset so both bottom-pinned headers remain
-               *      visible side-by-side while either bucket is below
-               *      the fold. ─── */
-              const HEADER_HEIGHT = 38
+              /* ─── Sticky-stack variant — each bucket header sticks at
+               *      the top when its natural position scrolls past the
+               *      filter chrome; flows naturally otherwise. ─── */
               return (
                 // No flex `gap` on the wrapper — each bucket manages its
                 // own top/bottom spacing so the 空间 group can flatten
@@ -1038,6 +1145,12 @@ export default function ResourceLibraryView({
                         />
                         {!officialCollapsed && officialCaps.length > 0 &&
                           renderCards(officialCaps, 'official')}
+                        {!officialCollapsed && officialAll.length > officialVisible && (
+                          <LoadMoreButton
+                            remaining={officialAll.length - officialVisible}
+                            onClick={() => loadMore('bucket-official')}
+                          />
+                        )}
                       </section>
                     )}
                     {thirdPartyGroups.length > 0 && (
@@ -1052,8 +1165,8 @@ export default function ResourceLibraryView({
                           total={thirdPartyTotal}
                           collapsed={thirdPartyCollapsed}
                           onToggle={() => toggleExternalGroup('thirdParty')}
-                          stickyStyle={{ top: filterHeight, bottom: HEADER_HEIGHT }}
-                          featherEdges="both"
+                          stickyStyle={{ top: filterHeight }}
+                          featherEdges="below"
                           zIndex={6}
                           className="mt-6"
                         />
@@ -1061,6 +1174,12 @@ export default function ResourceLibraryView({
                           <div className="mt-3">
                             {renderCards(thirdPartyCaps, 'thirdParty')}
                           </div>
+                        )}
+                        {!thirdPartyCollapsed && thirdPartyAll.length > thirdPartyVisible && (
+                          <LoadMoreButton
+                            remaining={thirdPartyAll.length - thirdPartyVisible}
+                            onClick={() => loadMore('bucket-thirdParty')}
+                          />
                         )}
                       </>
                     )}
@@ -1071,8 +1190,8 @@ export default function ResourceLibraryView({
                           total={spaceTotal}
                           collapsed={spaceCollapsed}
                           onToggle={() => toggleExternalGroup('space')}
-                          stickyStyle={{ top: filterHeight, bottom: 0 }}
-                          featherEdges="both"
+                          stickyStyle={{ top: filterHeight }}
+                          featherEdges="below"
                           zIndex={7}
                           className="mt-6"
                         />
@@ -1080,6 +1199,12 @@ export default function ResourceLibraryView({
                           <div className="mt-3">
                             {renderCards(spaceCaps, 'space')}
                           </div>
+                        )}
+                        {!spaceCollapsed && spaceAll.length > spaceVisible && (
+                          <LoadMoreButton
+                            remaining={spaceAll.length - spaceVisible}
+                            onClick={() => loadMore('bucket-space')}
+                          />
                         )}
                       </>
                     )}
@@ -1089,29 +1214,51 @@ export default function ResourceLibraryView({
           ) : (
             <div className="flex flex-col gap-8 px-6 pt-5 pb-10">
               {!isFiltering ? (
-                PRIMARY_CATEGORIES.map((primary) => {
-                  const groupsInPrimary = groups.filter(
-                    (g) => g.platform.primaryCategory === primary,
-                  )
-                  if (groupsInPrimary.length === 0) return null
+                // New-taxonomy rendering: walk every new primary in order,
+                // emit a section per secondary that has ≥1 capability.
+                // Cards flatten across resources within each section.
+                NEW_PRIMARY_CATEGORIES.map((primary) => {
+                  const visibleSecondaries: {
+                    secondary: string
+                    caps: { cap: Capability; platform: Resource }[]
+                  }[] = []
+                  for (const sec of NEW_SECONDARIES_BY_PRIMARY[primary]) {
+                    const entry = sectionGroups.get(`${primary}::${sec}`)
+                    if (entry && entry.caps.length > 0) {
+                      visibleSecondaries.push({ secondary: sec, caps: entry.caps })
+                    }
+                  }
+                  // 其他 primary has no spec'd secondaries — surface its
+                  // catch-all bucket directly when populated.
+                  if (primary === '其他') {
+                    const entry = sectionGroups.get(`${primary}::其他`)
+                    if (entry && entry.caps.length > 0) {
+                      visibleSecondaries.push({ secondary: '其他', caps: entry.caps })
+                    }
+                  }
+                  if (visibleSecondaries.length === 0) return null
                   return (
                     <div
                       key={primary}
                       id={`resource-anchor-pri-${primary}`}
                       className="flex flex-col gap-7 scroll-mt-4"
                     >
-                      {groupsInPrimary.map((g) => (
+                      {visibleSecondaries.map((sec) => (
                         <div
-                          key={g.platform.id}
-                          id={`resource-anchor-sec-${g.platform.secondaryCategory}`}
+                          key={sec.secondary}
+                          id={`resource-anchor-sec-${sec.secondary}`}
                           className="scroll-mt-4"
                         >
-                          <PlatformGroup
-                            group={g}
+                          <CapabilitySection
+                            primary={primary}
+                            secondary={sec.secondary}
+                            caps={sec.caps}
                             layout={cardLayout}
-                            onSelectCapability={(cap) =>
+                            visibleCount={getVisibleCount(`section-${primary}-${sec.secondary}`)}
+                            onLoadMore={() => loadMore(`section-${primary}-${sec.secondary}`)}
+                            onSelectCapability={(cap, platform) =>
                               onSelectCapability({
-                                platformId: g.platform.id,
+                                platformId: platform.id,
                                 name: cap.name,
                                 category: cap.category ?? null,
                               })
@@ -1123,21 +1270,49 @@ export default function ResourceLibraryView({
                   )
                 })
               ) : (
+                // Filtered view stays flat (no by-primary headings), but
+                // still emits the per-primary and per-secondary anchor
+                // IDs so left-tree clicks can scroll-locate the matching
+                // platform group. Primary anchor lives on the FIRST
+                // surviving group of that primary.
                 <div className="flex flex-col gap-7">
-                  {groups.map((g) => (
-                    <PlatformGroup
-                      key={g.platform.id}
-                      group={g}
-                      layout={cardLayout}
-                      onSelectCapability={(cap) =>
-                        onSelectCapability({
-                          platformId: g.platform.id,
-                          name: cap.name,
-                          category: cap.category ?? null,
-                        })
-                      }
-                    />
-                  ))}
+                  {(() => {
+                    // Filtered-view anchor IDs are keyed by string so we
+                    // can mix old and new taxonomy values transparently.
+                    const seenPrimaries = new Set<string>()
+                    return groups.map((g) => {
+                      const primary = g.platform.primaryCategory
+                      const isFirstOfPrimary = !seenPrimaries.has(primary)
+                      seenPrimaries.add(primary)
+                      return (
+                        <div
+                          key={g.platform.id}
+                          id={`resource-anchor-sec-${g.platform.secondaryCategory}`}
+                          className="scroll-mt-4"
+                        >
+                          {isFirstOfPrimary && (
+                            <div
+                              id={`resource-anchor-pri-${primary}`}
+                              className="scroll-mt-4"
+                            />
+                          )}
+                          <PlatformGroup
+                            group={g}
+                            layout={cardLayout}
+                            visibleCount={getVisibleCount(`platform-${g.platform.id}`)}
+                            onLoadMore={() => loadMore(`platform-${g.platform.id}`)}
+                            onSelectCapability={(cap) =>
+                              onSelectCapability({
+                                platformId: g.platform.id,
+                                name: cap.name,
+                                category: cap.category ?? null,
+                              })
+                            }
+                          />
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               )}
             </div>
@@ -1237,13 +1412,18 @@ function ComingSoonView({
 function PlatformGroup({
   group,
   layout,
+  visibleCount,
+  onLoadMore,
   onSelectCapability,
 }: {
   group: { platform: Resource; caps: Capability[]; total: number }
   layout: CardLayout
+  visibleCount: number
+  onLoadMore: () => void
   onSelectCapability: (capability: Capability) => void
 }) {
-  const visible = group.caps.slice(0, PER_PLATFORM_PREVIEW_LIMIT)
+  const visible = group.caps.slice(0, visibleCount)
+  const remaining = group.caps.length - visible.length
   // Both layouts render the banner-style RichCapabilityCard via
   // auto-fill grids; only the column min size differs. 紧凑卡片 picks
   // a smaller min so a 1440 viewport (right pane ≈ 876px after
@@ -1274,7 +1454,87 @@ function PlatformGroup({
           />
         ))}
       </div>
+      {remaining > 0 && (
+        <LoadMoreButton remaining={remaining} onClick={onLoadMore} />
+      )}
     </section>
+  )
+}
+
+/** New-taxonomy section: capabilities grouped by inferred (primary,
+ *  secondary). Flat across platforms — each card still shows its source
+ *  platform in the meta row. The section header is the secondary
+ *  category name (e.g. "直播内容", "图片生成"). */
+function CapabilitySection({
+  secondary,
+  caps,
+  layout,
+  visibleCount,
+  onLoadMore,
+  onSelectCapability,
+}: {
+  primary: PrimaryCategory
+  secondary: string
+  caps: { cap: Capability; platform: Resource }[]
+  layout: CardLayout
+  visibleCount: number
+  onLoadMore: () => void
+  onSelectCapability: (cap: Capability, platform: Resource) => void
+}) {
+  const visible = caps.slice(0, visibleCount)
+  const remaining = caps.length - visible.length
+  const gridCols =
+    layout === 'compact'
+      ? 'grid-cols-[repeat(auto-fill,minmax(200px,1fr))]'
+      : 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]'
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
+          {secondary}
+        </span>
+        <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+          {caps.length}
+        </span>
+      </div>
+      <div className={`grid ${gridCols} gap-3`}>
+        {visible.map(({ cap, platform }, idx) => (
+          <RichCapabilityCard
+            key={`${platform.id}-${cap.name}-${idx}`}
+            capability={cap}
+            platform={platform}
+            onClick={() => onSelectCapability(cap, platform)}
+          />
+        ))}
+      </div>
+      {remaining > 0 && (
+        <LoadMoreButton remaining={remaining} onClick={onLoadMore} />
+      )}
+    </section>
+  )
+}
+
+/** "加载更多" button shown at the bottom of any group whose visible
+ *  count is less than its total. Centered bordered pill matching the
+ *  card style. */
+function LoadMoreButton({
+  onClick,
+}: {
+  /** Remaining count is intentionally not surfaced — the button stays
+   *  visually clean. */
+  remaining: number
+  onClick: () => void
+}) {
+  return (
+    <div className="flex justify-center pt-1">
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex h-9 items-center rounded-full border border-[var(--divider-soft)] bg-white px-5 text-[13px] text-[var(--color-ink)]/75 transition-colors hover:border-[var(--color-ink)]/30 hover:text-[var(--color-ink)] dark:bg-[var(--color-surface-0)]"
+      >
+        加载更多
+      </button>
+    </div>
   )
 }
 
@@ -1554,14 +1814,17 @@ function CheckboxFilter({
  *  chip gets the filled / bordered look; everything else is plain text.
  *  Pass `collapsible` to wrap long lists into 1 line with a "展开 / 收起"
  *  trigger at the end. */
-function ChipFilterRow({
+// @ts-expect-error — kept for future chip-filter row UI; not wired yet.
+function _ChipFilterRow({
   label,
   value,
   options,
   onChange,
   collapsible,
 }: {
-  label: string
+  /** Pass `null` (or empty string) to render only the chips, no leading
+   *  label cell — used by 内场 mode where the chips speak for themselves. */
+  label: string | null
   value: string
   options: readonly { id: string; label: string }[]
   onChange: (id: string) => void
@@ -1570,11 +1833,13 @@ function ChipFilterRow({
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="flex items-start gap-1 pt-1">
-      <div className="flex h-[26px] w-12 shrink-0 items-center">
-        <span className="text-[13px] font-medium leading-[18px] text-[var(--color-ink)]/80">
-          {label}
-        </span>
-      </div>
+      {label && (
+        <div className="flex h-[26px] w-12 shrink-0 items-center">
+          <span className="text-[13px] font-medium leading-[18px] text-[var(--color-ink)]/80">
+            {label}
+          </span>
+        </div>
+      )}
       <div className="flex flex-1 items-start gap-2">
         <div
           className={`flex flex-1 flex-wrap items-start gap-2 ${
