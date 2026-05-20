@@ -11,10 +11,10 @@ import {
 } from '../../store/artifact-store'
 import {
   ADDABLE_NODES_BY_KIND,
+  getSubKindsFor,
+  getSubTabLabel,
   NODE_ICONS,
   NODE_LABELS,
-  SUB_KINDS_BY_NODE,
-  SUB_TAB_LABELS,
   type ProjectKind,
   type WorkspaceNodeKind,
 } from '../../store/workspace-nodes'
@@ -169,24 +169,32 @@ export function WorkspaceTabBar({
                 : 'text-[var(--color-ink)]/55 hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/85'
             }`}
           >
-            <Icon size={12} strokeWidth={1.7} />
-            <span>{NODE_LABELS[tab.kind]}</span>
-            {closable && (
-              <span
-                role="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  closeWorkspaceTab(projectId, tab.id)
-                }}
-                className={`-mr-1 flex h-3.5 w-3.5 items-center justify-center rounded transition-opacity ${
-                  isActive
-                    ? 'opacity-50 hover:bg-[var(--color-ink)]/15 hover:opacity-100'
-                    : 'opacity-0 group-hover:opacity-50 hover:bg-[var(--color-ink)]/15 hover:opacity-100'
+            {/* Icon slot — on hover the close X overlays the icon position
+                 for closable tabs. Non-closable / single-tab cases just
+                 show the icon. Stacked via `relative` + `absolute` so the
+                 layout doesn't reflow on hover. */}
+            <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center">
+              <Icon
+                size={12}
+                strokeWidth={1.7}
+                className={`transition-opacity ${
+                  closable ? 'group-hover:opacity-0' : ''
                 }`}
-              >
-                <X size={10} strokeWidth={2} />
-              </span>
-            )}
+              />
+              {closable && (
+                <span
+                  role="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    closeWorkspaceTab(projectId, tab.id)
+                  }}
+                  className="absolute inset-0 flex items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--color-ink)]/15 group-hover:opacity-100"
+                >
+                  <X size={11} strokeWidth={2} />
+                </span>
+              )}
+            </span>
+            <span>{NODE_LABELS[tab.kind]}</span>
           </button>
         )
       })}
@@ -238,6 +246,7 @@ export function WorkspaceTabBar({
 
 interface SubTabBarProps {
   projectId: string
+  projectKind: ProjectKind
   nodeKind: WorkspaceNodeKind
   activeSubKind: ArtifactKind | null
   className?: string
@@ -245,12 +254,13 @@ interface SubTabBarProps {
 
 export function NodeSubTabBar({
   projectId,
+  projectKind,
   nodeKind,
   activeSubKind,
   className = '',
 }: SubTabBarProps) {
   const setLayer2SubKind = useArtifactStore((s) => s.setLayer2SubKind)
-  const subs = SUB_KINDS_BY_NODE[nodeKind] ?? []
+  const subs = getSubKindsFor(nodeKind, projectKind)
   if (subs.length === 0) return null
   return (
     <div className={`flex items-center gap-2 ${className}`}>
@@ -267,7 +277,7 @@ export function NodeSubTabBar({
                 : 'text-[var(--color-ink)]/55 hover:bg-[var(--color-ink)]/[0.04] hover:text-[var(--color-ink)]/85'
             }`}
           >
-            {SUB_TAB_LABELS[s]}
+            {getSubTabLabel(projectKind, s)}
           </button>
         )
       })}

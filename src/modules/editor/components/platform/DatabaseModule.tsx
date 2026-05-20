@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  AlertTriangle,
   ChevronRight,
   Database,
   Key,
@@ -8,7 +7,6 @@ import {
   Table as TableIcon,
 } from 'lucide-react'
 import {
-  diffCount,
   diffEnvs,
   getProjectDb,
   useDbStore,
@@ -39,7 +37,6 @@ export default function DatabaseModule({ projectId }: Props) {
   }
 
   const diff = diffEnvs(db)
-  const diffN = diffCount(diff)
   const envData = db.envs[env]
   const tables = envData.tables
   const table =
@@ -67,16 +64,6 @@ export default function DatabaseModule({ projectId }: Props) {
             ))}
           </div>
         </div>
-        {diffN > 0 && (
-          <div className="mx-2 my-2 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[10.5px] text-amber-200 ring-1 ring-amber-500/25">
-            <AlertTriangle size={11} strokeWidth={2} className="mt-0.5 shrink-0" />
-            <span>
-              dev / prod 有 {diffN} 处差异，
-              <span className="text-amber-100">{diff.newTables.length}</span> 张新表 ·
-              <span className="text-amber-100"> {diff.changedTables.length}</span> 张表字段不同
-            </span>
-          </div>
-        )}
         <div className="thin-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           <div className="px-1 pb-1.5 text-[10.5px] uppercase tracking-[0.05em] text-[var(--color-ink)]/45">
             表 · {tables.length}

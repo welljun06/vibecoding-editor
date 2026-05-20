@@ -58,11 +58,7 @@ import {
   type Resource,
 } from './ResourceLibraryData'
 import {
-  buildAvatarProductView,
-  buildMiniProgramProductView,
-  buildProductView,
   getProductPages,
-  PRODUCT_CATEGORY_ICONS,
   WEB_PAGES,
   type FileNode,
   type ProjectKind,
@@ -82,7 +78,16 @@ import {
   WorkspaceNodeContent,
 } from '@/modules/editor/components/platform/PlatformModulesAdapter'
 import DatabaseOverlay from '@/modules/editor/components/platform/DatabaseOverlay'
-import { useArtifactStore } from '@/modules/editor/store/artifact-store'
+import {
+  useArtifactStore,
+  PROJECT_TITLE_TO_ID,
+} from '@/modules/editor/store/artifact-store'
+import {
+  DEFAULT_NODES_BY_KIND,
+  NODE_ICONS,
+  NODE_LABELS,
+  type WorkspaceNodeKind,
+} from '@/modules/editor/store/workspace-nodes'
 
 /** Each platform project has a `ProjectKind` (the concrete product /
  *  case it represents) and an `OutputShape` (the abstract category that
@@ -198,7 +203,6 @@ import {
   Archive,
   Type,
   MessageSquareText,
-  MessageSquarePlus,
   MessageCircleHeart,
   Gamepad2,
   FileSearch,
@@ -216,7 +220,6 @@ import {
   AlertTriangle,
   MessageSquareWarning,
   Blocks,
-  BookOpen,
   Gift,
   PencilLine,
   Flag,
@@ -1376,16 +1379,19 @@ const AI_MODES: { id: AiMode; label: string; desc: string; icon: typeof Code2 }[
  *  when the active node has only 0–1 supported sub-kinds. */
 function Layer2Strip({
   projectId,
+  projectKind,
   activeNodeKind,
   activeSubKind,
 }: {
   projectId: string
+  projectKind: Parameters<typeof NodeSubTabBar>[0]['projectKind']
   activeNodeKind: Parameters<typeof NodeSubTabBar>[0]['nodeKind']
   activeSubKind: Parameters<typeof NodeSubTabBar>[0]['activeSubKind']
 }) {
   return (
     <NodeSubTabBar
       projectId={projectId}
+      projectKind={projectKind}
       nodeKind={activeNodeKind}
       activeSubKind={activeSubKind}
       className="h-10 shrink-0 border-b border-[var(--divider-soft)] bg-[var(--color-surface-1)]/40 px-4"
@@ -1640,8 +1646,10 @@ function PlatformSidebar({
   onOpenSkills,
   onOpenCreativeSquare,
   activeNav,
-  activeRoute,
+  activeRoute: _activeRoute,
   activeProjectName,
+  onPickNode,
+  activeNodeKindOfActiveProject,
 }: {
   /** Per-project file trees. Projects missing from this map render the
    *  "暂无文件" empty state when expanded. */
@@ -1673,6 +1681,12 @@ function PlatformSidebar({
   /** Name of the currently-active project — page highlighting only
    *  applies to that project's product view. */
   activeProjectName: string
+  /** Click handler for a workspace node row under a project — switches
+   *  to that project and activates the matching right-side tab. */
+  onPickNode: (projectName: string, kind: WorkspaceNodeKind) => void
+  /** Active workspace tab id of the currently-active project — used to
+   *  highlight the matching node row. */
+  activeNodeKindOfActiveProject: WorkspaceNodeKind | null
 }) {
   const [spaceMenuPos, setSpaceMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [activeSpace, setActiveSpace] = useState('个人空间')
@@ -1876,7 +1890,6 @@ function PlatformSidebar({
           <div className="thin-scroll flex-1 overflow-y-auto pb-2">
             {ALL_PROJECTS.map((name) => {
               const open = openProjects.has(name)
-              const tree = projectTrees[name]
               return (
                 <div key={name}>
                   <div className="group flex items-center pr-5 transition-colors hover:bg-[var(--color-ink)]/[0.04]">
@@ -1904,57 +1917,50 @@ function PlatformSidebar({
                     </button>
                   </div>
                   {open && (() => {
-                    const emptyStub = (
-                      <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
-                        暂无文件
-                      </div>
-                    )
-                    if (!tree) return emptyStub
+                    // Project rows expand to the project's workspace
+                    // nodes (default-pinned set from its kind). Clicking
+                    // a node row activates the project and switches the
+                    // right side to that tab. Mirrors the right-side
+                    // workspace tab strip 1:1 so the two surfaces stay
+                    // in sync.
                     const kind = PROJECT_KINDS[name] ?? 'mini-program'
-                    // AI 分身 and 小程序 projects are config-driven;
-                    // other kinds bucket the raw file tree.
-                    const productTree =
-                      kind === 'ai-avatar'
-                        ? buildAvatarProductView(tree, getAvatarConfig(name))
-                        : kind === 'mini-program'
-                          ? buildMiniProgramProductView(
-                              tree,
-                              getMiniProgramConfig(name),
-                            )
-                          : buildProductView(tree, kind)
-                    if (productTree.length === 0) return emptyStub
+                    const nodes = DEFAULT_NODES_BY_KIND[kind] ?? []
+                    if (nodes.length === 0) {
+                      return (
+                        <div className="px-5 py-1.5 pl-[38px] text-[12px] text-[var(--color-ink)]/40">
+                          暂无节点
+                        </div>
+                      )
+                    }
                     return (
-                      // Extra left inset so a project's contents read as
-                      // nested under its project row.
                       <div className="pl-2">
-                        <FileTreeView
-                          nodes={productTree}
-                          expanded={expandedDirs}
-                          onToggleDir={toggleDir}
-                          onOpenFile={openFileInTab}
-                          depth={1}
-                          // Distinct root so product-view expansion state
-                          // never collides with file-view paths.
-                          parentPath="__product__"
-                          railStartDepth={1}
-                          iconFor={(n, path) =>
-                            // Path-keyed leaves first: every 界面 page
-                            // shares the same page icon; 知识库 / 技能
-                            // items their own. Else fall to the name map.
-                            path.includes('/界面/')
-                              ? AppWindow
-                              : path.includes('/知识库/')
-                                ? BookOpen
-                                : path.includes('/技能/')
-                                  ? Sparkles
-                                  : PRODUCT_CATEGORY_ICONS[n.name]
-                          }
-                          isActive={
-                            name === activeProjectName
-                              ? (n) => n.name === (activeRoute ?? '首页')
-                              : undefined
-                          }
-                        />
+                        {nodes.map((nk) => {
+                          const Icon = NODE_ICONS[nk]
+                          const isActive =
+                            name === activeProjectName &&
+                            nk === activeNodeKindOfActiveProject
+                          return (
+                            <button
+                              key={nk}
+                              type="button"
+                              onClick={() => onPickNode(name, nk)}
+                              className={`flex w-full items-center gap-1.5 rounded-sm py-1 pl-[26px] pr-2 text-left text-[12px] transition-colors ${
+                                isActive
+                                  ? 'bg-[var(--color-ink)]/[0.06] text-[var(--color-ink)]'
+                                  : 'text-[var(--color-ink)]/65 hover:bg-[var(--color-ink)]/[0.03] hover:text-[var(--color-ink)]/90'
+                              }`}
+                            >
+                              <Icon
+                                size={12}
+                                strokeWidth={1.7}
+                                className={`shrink-0 ${
+                                  isActive ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/55'
+                                }`}
+                              />
+                              <span className="truncate">{NODE_LABELS[nk]}</span>
+                            </button>
+                          )
+                        })}
                       </div>
                     )
                   })()}
@@ -2116,7 +2122,7 @@ export default function VibeCodingPage() {
   /* Chat session list — the header's conversation-name button opens a
    * dropdown of these, and the + button creates a fresh empty session. */
   type ChatSession = { id: string; name: string }
-  const [sessions, setSessions] = useState<ChatSession[]>([
+  const [, setSessions] = useState<ChatSession[]>([
     { id: 's-current', name: '新会话' },
     { id: 's-tarot', name: '第五人格塔罗运势' },
     { id: 's-daily', name: '每日打卡小程序' },
@@ -2205,6 +2211,7 @@ export default function VibeCodingPage() {
   const publishScenes = usePublishFlowStore((s) => s.scenes)
   const startPublish = usePublishFlowStore((s) => s.start)
   const resetPublish = usePublishFlowStore((s) => s.reset)
+  const setPublishAnchorRect = usePublishFlowStore((s) => s.setAnchorRect)
   const togglePublishScene = usePublishFlowStore((s) => s.toggleScene)
   const submitPublish = usePublishFlowStore((s) => s.submit)
   const confirmPublish = usePublishFlowStore((s) => s.confirm)
@@ -3819,6 +3826,17 @@ export default function VibeCodingPage() {
   const useHostPreview =
     activeNodeKind === 'code' ||
     (activeNodeKind === 'preview' && isAppShapeArtifact)
+
+  // Sync legacy `activeFilter` from the Layer-2 sub-kind so the host's
+  // existing `previewSurface` dispatch (line ~3840) keeps routing to
+  // the right surface (MiniAppPreview / ChatPreview / etc.) when the
+  // user clicks a sub-tab on the preview node.
+  useEffect(() => {
+    if (activeNodeKind !== 'preview' || !activeSubKind) return
+    if (activeSubKind === 'mp-page') setActiveFilter('mini-program')
+    else if (activeSubKind === 'persona-card') setActiveFilter('ai-avatar')
+    else if (activeSubKind === 'scene-card') setActiveFilter('xiaohua')
+  }, [activeNodeKind, activeSubKind])
   /* True when the active project has actual scaffolded content — drives
    * whether the right-side preview renders the phone mock or an empty
    * state. Stub projects (no entry in `projectTrees`) get the empty
@@ -4071,9 +4089,10 @@ export default function VibeCodingPage() {
 
   const [editingProjectTitle, setEditingProjectTitle] = useState(false)
   /* Which session row (if any) is in inline-edit mode inside the dropdown. */
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
-  const renameSession = (id: string, name: string) =>
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
+  // Session rename UI was retired with the session switcher — keeping
+  // `setSessions` only so handleNewSession / project switch flows can
+  // still seed a fresh session record.
+
   // Preview-strip tabs. AI 分身 projects collapse to a single「AI分身」
   // tab (value stays 'mini-program' so previewSurface keeps dispatching
   // by activeProjectKind); other kinds keep the original three.
@@ -4233,6 +4252,30 @@ export default function VibeCodingPage() {
             }
             activeRoute={previewRoute}
             activeProjectName={projectTitle}
+            activeNodeKindOfActiveProject={activeNodeKind}
+            onPickNode={(name, kind) => {
+              // If the user clicked a node under a project that isn't
+              // currently active, switch projects first (re-uses the
+              // onSwitchProject path so chat / preview state resets).
+              if (name !== projectTitle) {
+                setProjectTitle(name)
+                handleNewSession()
+                setPlatformHomeOpen(false)
+                setPlatformResourceLibraryOpen(false)
+                setPlatformSkillsOpen(false)
+                setPlatformCreativeSquareOpen(false)
+                setActivePreviewTab(0)
+                setPreviewRoute(null)
+                setActiveFilter('mini-program')
+              }
+              // Switch the right-side workspace tab. The project may
+              // not have a saved tab layout yet — addWorkspaceTab is
+              // an idempotent "ensure + activate" for a node kind.
+              const pid = PROJECT_TITLE_TO_ID[name]
+              if (pid) {
+                useArtifactStore.getState().addWorkspaceTab(pid, kind)
+              }
+            }}
           />
           {/* Right-edge drag handle */}
           <div
@@ -4398,6 +4441,7 @@ export default function VibeCodingPage() {
           >
             {editingProjectTitle ? <Check size={11} /> : <Pencil size={11} />}
           </button>
+
         </div>
 
         {/* ── Workspace tabs — Layer 1. Directory-driven: defaults
@@ -4465,23 +4509,9 @@ export default function VibeCodingPage() {
               </div>
             )}
           </div>
-          {/* Database — click toggles a centered overlay drawer with the
-               full database module. Primary entry point in condensed
-               scheme; quick-access shortcut in detailed (alongside the
-               数据库 tab). Highlighted when the overlay is open. */}
-          <button
-            type="button"
-            onClick={() => setDatabaseOverlayOpen(!databaseOverlayOpen)}
-            title="数据库"
-            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
-              databaseOverlayOpen
-                ? 'bg-[var(--color-ink)]/[0.08] text-[var(--color-ink)]'
-                : 'text-[var(--color-ink)]/90 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-ink)]'
-            }`}
-          >
-            <Database size={16} />
-          </button>
-          {/* Right-side helper icons */}
+          {/* Right-side helper icons — 数据库 lives as a Layer 1 tab now,
+               so the standalone icon shortcut was removed (it was a
+               duplicate entry point from the earlier condensed-view era). */}
           {[Headphones, Clock].map((Icon, i) => (
             <button
               key={i}
@@ -4505,12 +4535,22 @@ export default function VibeCodingPage() {
           )}
 
           {/* 发布 — primary solid CTA at the far right. Always visible in
-               platform mode; opens the publish-flow modal. */}
+               platform mode; opens the publish-flow as a popover
+               anchored under this button. */}
           {isPlatform && !platformHomeOpen && !platformSecondaryPageOpen && (
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
                 resetPublish()
+                setPublishAnchorRect({
+                  top: rect.top,
+                  left: rect.left,
+                  right: rect.right,
+                  bottom: rect.bottom,
+                  width: rect.width,
+                  height: rect.height,
+                })
                 startPublish('modal')
               }}
               className="ml-2 flex items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-4 py-1.5 text-[12.5px] font-medium text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
@@ -4604,94 +4644,9 @@ export default function VibeCodingPage() {
             }`}
           >
           <div className={`flex h-full min-h-0 flex-col ${isPlatform ? 'px-2 pt-3 pb-2' : chatOnLeft ? '' : 'px-1.5 pt-3 pb-1.5'}`}>
-          {/* Chat header — session name dropdown + new session */}
-          <div className="flex flex-shrink-0 items-center justify-between px-2.5">
-            <div ref={sessionMenuRef} className="relative flex items-center">
-              <button
-                type="button"
-                onClick={() => setSessionMenuOpen((v) => !v)}
-                className="flex items-center gap-1 rounded text-[12px] leading-5 text-[var(--color-ink)]/70 transition-colors hover:text-[var(--color-ink)]"
-              >
-                <span className="max-w-[180px] truncate">
-                  {sessions.find((s) => s.id === activeSessionId)?.name ?? '新会话'}
-                </span>
-                <ChevronDown
-                  size={12}
-                  className={`shrink-0 transition-transform ${sessionMenuOpen ? 'rotate-180' : ''}`}
-                />
-              </button>
-              {sessionMenuOpen && (
-                <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--color-surface-0)] shadow-[0_12px_28px_-8px_rgba(16,18,24,0.2)]">
-                  <div className="thin-scroll max-h-[320px] overflow-y-auto py-1">
-                    {sessions.map((s) => {
-                      const isActive = s.id === activeSessionId
-                      const isEditing = editingSessionId === s.id
-                      return (
-                        <div
-                          key={s.id}
-                          role="button"
-                          onClick={() => {
-                            if (isEditing) return
-                            if (s.id !== activeSessionId) {
-                              setActiveSessionId(s.id)
-                              resetChatState()
-                            }
-                            setSessionMenuOpen(false)
-                          }}
-                          className={`group flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors ${
-                            isActive
-                              ? 'bg-[var(--color-ink)]/[0.06] text-[var(--color-ink)]/85'
-                              : 'text-[var(--color-ink)]/70 hover:bg-[var(--fill-subtle)]'
-                          }`}
-                        >
-                          {isEditing ? (
-                            <input
-                              autoFocus
-                              value={s.name}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => renameSession(s.id, e.target.value)}
-                              onBlur={() => setEditingSessionId(null)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === 'Escape') setEditingSessionId(null)
-                              }}
-                              className="min-w-0 flex-1 border-b border-[var(--color-ink)]/40 bg-transparent text-[12px] text-[var(--color-ink)] outline-none focus:border-[var(--color-ink)]"
-                            />
-                          ) : (
-                            <span className="min-w-0 flex-1 truncate">{s.name}</span>
-                          )}
-                          {!isEditing && (
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              title="重命名"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setEditingSessionId(s.id)
-                              }}
-                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--color-ink)]/40 opacity-0 transition-opacity hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]/80 group-hover:opacity-100"
-                            >
-                              <Pencil size={11} />
-                            </span>
-                          )}
-                          {isActive && !isEditing && (
-                            <Check size={12} className="shrink-0 text-[var(--color-ink)]/60" />
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              title="新会话"
-              onClick={handleNewSession}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--color-ink)]/65 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-            >
-              <MessageSquarePlus size={14} strokeWidth={1.8} />
-            </button>
-          </div>
+          {/* Chat-header row removed — session switcher + new-session
+               button now live in the top header (next to the project
+               title) so they share a single row with project naming. */}
           {/* Scrollable messages */}
           <div ref={chatScrollRef} className={`thin-scroll flex-1 overflow-y-auto px-2.5 pt-8 pb-8 ${chatCleared ? '' : 'space-y-6'} ${fadeClassFromEdges(chatScrollEdges)}`}>
             {(chatCleared || (!needsFlowActive && !showChatPublish && sentMessages.length === 0)) && proposalStep === 'idle' ? (
@@ -6846,10 +6801,14 @@ export default function VibeCodingPage() {
                condensed.产物 mode) falls through to the existing tab bar
                + phone preview surface. */}
           {/* Layer 2 sub-tab strip — under the workspace tab, switching
-               between artifact kinds for the active node. */}
-          {isPlatform && activeNodeKind && (
+               between artifact kinds for the active node. Skipped for
+               the 预览 node: its sub-tabs are merged into the host's
+               filter chips row below, sharing space with the action
+               buttons (reload / 真机预览 / 发布). */}
+          {isPlatform && activeNodeKind && activeNodeKind !== 'preview' && (
             <Layer2Strip
               projectId={moduleProjectId}
+              projectKind={activeProjectKind}
               activeNodeKind={activeNodeKind}
               activeSubKind={activeSubKind}
             />
@@ -6943,26 +6902,21 @@ export default function VibeCodingPage() {
           {(() => {
             const phoneView = (
               <>
-                {/* filter chips + action buttons */}
+                {/* Layer 2 sub-tabs + action buttons — merged into a
+                     single row for the 预览 node. Sub-tabs swap which
+                     artifact (and thus which preview surface) is active;
+                     buttons (reload / 真机预览 / 发布) run on the active
+                     preview. */}
                 <div className="@container flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
                   {activeProjectKind === 'web-app' ? (
                     addressBar
                   ) : (
-                    <div className="flex items-center gap-6">
-                      {filters.map((f) => (
-                        <button
-                          key={f.value}
-                          onClick={() => setActiveFilter(f.value)}
-                          className={`relative text-[13px] font-medium tracking-wide transition-colors ${
-                            f.value === activeFilter
-                              ? 'text-[var(--color-ink)]'
-                              : 'text-[var(--color-ink)]/35 hover:text-[var(--color-ink)]/65'
-                          }`}
-                        >
-                          {f.label}
-                        </button>
-                      ))}
-                    </div>
+                    <NodeSubTabBar
+                      projectId={moduleProjectId}
+                      projectKind={activeProjectKind}
+                      nodeKind="preview"
+                      activeSubKind={activeSubKind}
+                    />
                   )}
 
                   <div className="flex items-center gap-2">
@@ -7411,7 +7365,7 @@ export default function VibeCodingPage() {
           )}
           </div>
 
-          {fileTreeOpen && (
+          {fileTreeOpen && activeNodeKind === 'code' && (
             <div className="relative shrink-0" style={{ width: fileTreeWidth }}>
               <div className="thin-scroll flex h-full flex-col overflow-y-auto border-l border-[var(--divider-soft)] bg-[var(--color-surface-0)]/50">
                 {/* ── Section 1 — 对话上下文 (referenced skills / knowledge) ── */}

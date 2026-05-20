@@ -44,19 +44,19 @@ export type WorkspaceNodeKind =
   | 'proposal-dashboard' // 数据看板
 
 export const NODE_LABELS: Record<WorkspaceNodeKind, string> = {
-  preview: '界面预览',
-  code: '代码文件',
+  preview: '预览',
+  code: '代码',
   database: '数据库',
   agent: '智能体',
-  'mp-settings': '小程序设置',
-  assets: '静态素材',
+  'mp-settings': '设置',
+  assets: '素材',
   persona: '人设',
-  'persona-prompt': '人设指令',
+  'persona-prompt': '指令',
   knowledge: '知识库',
   skills: '技能',
   triggers: '触发器',
-  'proposal-doc': '提案文档',
-  'proposal-dashboard': '数据看板',
+  'proposal-doc': '提案',
+  'proposal-dashboard': '看板',
 }
 
 export const NODE_ICONS: Record<WorkspaceNodeKind, LucideIcon> = {
@@ -118,7 +118,9 @@ export const ADDABLE_NODES_BY_KIND: Record<ProjectKind, WorkspaceNodeKind[]> = {
  *  a single canonical content surface, e.g. 数据库). */
 export const SUB_KINDS_BY_NODE: Record<WorkspaceNodeKind, ArtifactKind[]> = {
   preview: ['mp-page', 'scene-card', 'persona-card'],
-  code: ['mp-page', 'mp-agent', 'scene-card', 'persona-card'],
+  // 代码节点的多文件 tab 已经是它自己的导航 — 再叠 ArtifactKind 子 tab
+  // 是冗余，留空让 Layer 2 strip 自动隐藏。
+  code: [],
   database: [],
   agent: ['mp-agent'],
   'mp-settings': [],
@@ -132,11 +134,60 @@ export const SUB_KINDS_BY_NODE: Record<WorkspaceNodeKind, ArtifactKind[]> = {
   'proposal-dashboard': [],
 }
 
-/** Labels for the Layer-2 sub-tab strip — keyed by artifact kind. */
-export const SUB_TAB_LABELS: Record<ArtifactKind, string> = {
+/** Layer-2 sub-tab label keyed by (project-kind × artifact-kind).
+ *  Lets the same ArtifactKind read with different copy across project
+ *  types — e.g. scene-card → "比分卡" under AI 分身, "Feed 流" under
+ *  小程序. */
+const SUB_TAB_LABELS_BY_PROJECT: Record<
+  ProjectKind,
+  Partial<Record<ArtifactKind, string>>
+> = {
+  'ai-avatar': {
+    'persona-card': 'AI 分身',
+    'scene-card': '比分卡',
+  },
+  'mini-program': {
+    'mp-page': '小程序',
+    'mp-agent': '小程序 Agent',
+    'scene-card': 'Feed 流',
+  },
+  'web-app': {
+    'mp-page': 'Web 页面',
+  },
+  'ops-proposal': {
+    'proposal-doc': '提案',
+  },
+}
+
+/** Fallback label per artifact kind when no project-specific copy is
+ *  defined. Reads as a sensible generic name. */
+const FALLBACK_SUB_TAB_LABELS: Record<ArtifactKind, string> = {
   'persona-card': 'AI 分身',
-  'scene-card': 'Feed 卡',
-  'mp-page': '小程序',
-  'mp-agent': '小程序 Agent',
+  'scene-card': '场景卡',
+  'mp-page': '页面',
+  'mp-agent': 'Agent',
   'proposal-doc': '提案',
+}
+
+export function getSubTabLabel(
+  projectKind: ProjectKind,
+  artifactKind: ArtifactKind,
+): string {
+  return (
+    SUB_TAB_LABELS_BY_PROJECT[projectKind]?.[artifactKind] ??
+    FALLBACK_SUB_TAB_LABELS[artifactKind]
+  )
+}
+
+/** Which Layer-2 sub-kinds (ArtifactKinds) should appear under the
+ *  given workspace node for a project of the given kind. Filters the
+ *  full SUB_KINDS_BY_NODE list down to only the kinds that make sense
+ *  for the project type — e.g. AI 分身 projects don't expose 小程序
+ *  pages under preview, and vice versa. */
+export function getSubKindsFor(
+  nodeKind: WorkspaceNodeKind,
+  projectKind: ProjectKind,
+): ArtifactKind[] {
+  const allowed = SUB_TAB_LABELS_BY_PROJECT[projectKind] ?? {}
+  return (SUB_KINDS_BY_NODE[nodeKind] ?? []).filter((k) => k in allowed)
 }

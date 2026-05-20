@@ -209,17 +209,35 @@ export interface PublishHistoryEntry {
 export type PublishStep = 'idle' | 'select' | 'review' | 'confirmed'
 export type PublishMode = 'chat' | 'modal'
 
+/** Lightweight snapshot of the trigger button's DOMRect. Used to
+ *  position the publish popover under the button instead of as a
+ *  centered overlay. Stored as plain numbers so it's serialization /
+ *  StrictMode safe. */
+export interface PublishAnchorRect {
+  top: number
+  left: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+}
+
 interface PublishFlowState {
   /* — chat / modal flow (legacy) — */
   step: PublishStep
   mode: PublishMode
   scenes: string[]
+  /** Anchor rect of the button that opened the popover (set right
+   *  before `start('modal')`). null when the flow is closed or not
+   *  popover-positioned. */
+  anchorRect: PublishAnchorRect | null
   start: (mode: PublishMode) => void
   toggleScene: (s: string) => void
   submit: () => void
   confirm: () => void
   reset: () => void
   closeModal: () => void
+  setAnchorRect: (rect: PublishAnchorRect | null) => void
 
   /* — new job-based publish center — */
   jobs: PublishJob[]
@@ -344,7 +362,9 @@ export const usePublishFlowStore = create<PublishFlowState>((set, get) => ({
   step: 'idle',
   mode: 'chat',
   scenes: [],
+  anchorRect: null,
   start: (mode) => set({ step: 'select', mode }),
+  setAnchorRect: (rect) => set({ anchorRect: rect }),
   toggleScene: (s) => {
     const cur = get().scenes
     set({
