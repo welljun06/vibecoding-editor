@@ -75,6 +75,19 @@ import MiniProgramAgentView from './MiniProgramAgentView'
 import MiniProgramSettingsForm from './MiniProgramSettingsForm'
 import AssetGridView from './AssetGridView'
 import { getMiniProgramConfig } from './MiniProgramConfigData'
+import {
+  useArtifactViewSync,
+  ArtifactViewTabBar,
+  ArtifactViewContent,
+} from '@/modules/editor/components/platform/PlatformModulesAdapter'
+import DatabaseOverlay from '@/modules/editor/components/platform/DatabaseOverlay'
+import {
+  useArtifactStore,
+  VIEW_SCHEME_LABELS,
+  VIEW_SCHEME_HINTS,
+  type ViewScheme,
+} from '@/modules/editor/store/artifact-store'
+import { LayoutDashboard as ViewSchemeIcon, Columns2 as ViewSchemeCondensedIcon } from 'lucide-react'
 
 /** Each platform project has a `ProjectKind` (the concrete product /
  *  case it represents) and an `OutputShape` (the abstract category that
@@ -148,8 +161,6 @@ import {
   ChevronRight,
   Clock,
   Code2,
-  Columns2,
-  LayoutGrid,
   MoreHorizontal,
   Moon,
   Sun,
@@ -166,7 +177,6 @@ import {
   Headphones,
   Home,
   Inbox,
-  LayoutDashboard,
   PanelLeft,
   PanelRight,
   ListCollapse,
@@ -2191,7 +2201,7 @@ export default function VibeCodingPage() {
   /* Layout plan — 'workspace' is the default (tabs 合一, 产物可钉左右);
    * 'editor' mirrors IP-编辑器: 左侧常驻手机 + 中间独立文件编辑;
    * 'code' 把 chat 移到最左，中间文件编辑器，右侧常驻手机预览。 */
-  const [layout, setLayout] = useState<'workspace' | 'editor' | 'code' | 'platform'>('platform')
+  const [layout] = useState<'workspace' | 'editor' | 'code' | 'platform'>('platform')
   const isPlatform = layout === 'platform'
   const chatOnLeft = layout === 'code' || isPlatform
   /* Platform-only: sidebar + chat widths are both user-draggable; the
@@ -3761,6 +3771,52 @@ export default function VibeCodingPage() {
   const activeOutputShape: OutputShape = SHAPE_BY_KIND[activeProjectKind]
   const productTabLabel =
     activeOutputShape === 'artifact' ? '产物总览' : '产物预览'
+
+  /* Artifact-centric workspace tabs. Two schemes:
+   *   - detailed: 预览 / 编辑 / 数据库 / 发布渠道 / 运营数据 (5 tabs)
+   *   - condensed: 产物 / 发布 / 运行 (3 tabs, with Layer 2 sub-tabs
+   *     under 产物 switching preview / edit / data)
+   * `effectiveView` is the always-detailed equivalent that the host
+   * page's content rendering uses regardless of which scheme is on. */
+  const {
+    activeView,
+    setActiveView,
+    viewScheme,
+    effectiveView,
+    isUnifiedArtifactMode,
+    projectId: moduleProjectId,
+  } = useArtifactViewSync(projectTitle, activeProjectKind)
+  const setViewScheme = useArtifactStore((s) => s.setViewScheme)
+  const databaseOverlayOpen = useArtifactStore((s) => s.databaseOverlayOpen)
+  const setDatabaseOverlayOpen = useArtifactStore((s) => s.setDatabaseOverlayOpen)
+  const storeArtifacts = useArtifactStore((s) => s.artifacts)
+  const storeActiveArtifactId = useArtifactStore((s) => s.activeArtifactId)
+  const activeStoreArtifact = storeActiveArtifactId
+    ? storeArtifacts.find((a) => a.id === storeActiveArtifactId) ?? null
+    : null
+  /** True when we should defer to the host page's existing surface for
+   *  the middle column. Covers two cases:
+   *   - 预览 view + app-shape artifact (mp-page / mp-agent / fallback) →
+   *     show the host's phone preview + filter chips + reload buttons.
+   *   - 编辑 view → always; the multi-file tab system is the editing UX
+   *     regardless of artifact kind.
+   *  Other view tabs (数据库 / 发布渠道 / 运营数据) plus 预览 for
+   *  recall-shape artifacts go through ArtifactViewContent. */
+  const isAppShapeArtifact =
+    !activeStoreArtifact ||
+    activeStoreArtifact.kind === 'mp-page' ||
+    activeStoreArtifact.kind === 'mp-agent'
+  // App-shape (mp-page / mp-agent / unscaffolded project) uses the host
+  // for 预览 / 编辑 — the host already has the right phone preview
+  // surface and multi-file tab system. Recall-shape artifacts (scene-card
+  // / persona-card / proposal-doc) need form-based editing and custom
+  // previews, so they go through ArtifactViewContent. Unified mode
+  // (condensed.产物) always goes through the host so user gets the full
+  // tab strip regardless of artifact kind.
+  const useHostPreview =
+    isUnifiedArtifactMode ||
+    (isAppShapeArtifact &&
+      (effectiveView === 'preview' || effectiveView === 'edit'))
   /* True when the active project has actual scaffolded content — drives
    * whether the right-side preview renders the phone mock or an empty
    * state. Stub projects (no entry in `projectTrees`) get the empty
@@ -4247,7 +4303,34 @@ export default function VibeCodingPage() {
         }`}
         style={isPlatform ? { left: effectiveSidebarWidth } : undefined}
       >
-        <div className="flex items-center gap-3">
+        {/* Vertical divider aligned with the chat aside's right border —
+             extends the chat / preview seam up through the header so the
+             two columns read as two independent blocks (left = chat, right
+             = preview) instead of one continuous strip. Only when the
+             preview column is visible (mirrors the chat aside's border). */}
+        {isPlatform &&
+          !chatCollapsed &&
+          !previewHidden &&
+          !platformHomeOpen &&
+          !platformSecondaryPageOpen && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 w-px bg-[var(--divider)]"
+              style={{ left: platformChatWidth - 1 }}
+            />
+          )}
+        <div
+          className={`flex items-center gap-3 ${isPlatform ? 'shrink-0' : ''}`}
+          style={
+            isPlatform
+              ? // Pin the left section to the chat column's width so its
+                // right edge lines up with the chat/preview vertical
+                // divider. After this section the right cluster (tabs +
+                // icons) lives entirely above the preview column.
+                { width: chatWidthPx, paddingLeft: 0, paddingRight: 12 }
+              : undefined
+          }
+        >
           {!isPlatform && (
             <GlassIconButton onClick={handleBack} aria-label="返回" tone={80}>
               <ArrowLeft size={15} strokeWidth={1.8} />
@@ -4315,7 +4398,23 @@ export default function VibeCodingPage() {
           </button>
         </div>
 
-        <div className="flex items-center gap-1">
+        {/* ── Artifact view tabs — Layer 1 of the workspace. Live in the
+             header's right half (above the preview column). The left
+             section above is pinned to `chatWidthPx`, so the tabs
+             naturally sit just past the chat/preview seam. Icons + 发布
+             button below get `ml-auto` to anchor to the right edge.
+             Empty space in the middle is intentional. ── */}
+        {isPlatform && !platformHomeOpen && !platformSecondaryPageOpen && (
+          <div className="flex items-center">
+            <ArtifactViewTabBar
+              activeView={activeView}
+              onChange={setActiveView}
+              viewScheme={viewScheme}
+            />
+          </div>
+        )}
+
+        <div className={`flex items-center gap-1 ${isPlatform ? 'ml-auto' : ''}`}>
           {/* ── Layout switcher ── */}
           <div ref={layoutMenuRef} className="relative">
             <button
@@ -4327,70 +4426,50 @@ export default function VibeCodingPage() {
               <MoreHorizontal size={16} />
             </button>
             {layoutMenuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-[200px] overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--color-surface-2)] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] backdrop-blur-xl">
+              <div className="absolute right-0 top-full z-50 mt-1 w-[220px] overflow-hidden rounded-lg border border-[var(--divider)] bg-[var(--color-surface-2)] shadow-[0_20px_50px_-16px_rgba(0,0,0,0.7)] backdrop-blur-xl">
+                {/* — 视图方案 — */}
+                {isPlatform && (
+                  <>
+                    <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-ink)]/40">
+                      视图方案
+                    </div>
+                    {(['detailed', 'condensed'] as ViewScheme[]).map((s) => {
+                      const Icon =
+                        s === 'detailed' ? ViewSchemeIcon : ViewSchemeCondensedIcon
+                      const active = viewScheme === s
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => {
+                            setViewScheme(s)
+                            setLayoutMenuOpen(false)
+                          }}
+                          className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
+                            active
+                              ? 'bg-[var(--color-ink)]/[0.06]'
+                              : 'hover:bg-[var(--fill-subtle)]'
+                          }`}
+                        >
+                          <Icon size={14} className={`mt-0.5 shrink-0 ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/55'}`} />
+                          <span className="flex min-w-0 flex-col gap-0.5">
+                            <span className={`text-[12px] ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/80'}`}>
+                              {VIEW_SCHEME_LABELS[s]}
+                              {active && (
+                                <span className="ml-1.5 text-[10px] text-[var(--color-ink)]/45">当前</span>
+                              )}
+                            </span>
+                            <span className="text-[10px] text-[var(--color-ink)]/40">
+                              {VIEW_SCHEME_HINTS[s]}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                    <div className="mt-1 border-t border-[var(--divider-soft)]" />
+                  </>
+                )}
                 <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-ink)]/40">
-                  布局
-                </div>
-                {(
-                  [
-                    {
-                      value: 'workspace' as const,
-                      label: '工作区视图',
-                      hint: '单视图 / 分屏 tabs',
-                      icon: Columns2,
-                    },
-                    {
-                      value: 'code' as const,
-                      label: '编辑视图 · 左 chat',
-                      hint: '左侧对话 · 文件 · 右侧预览',
-                      icon: Code2,
-                    },
-                    {
-                      value: 'editor' as const,
-                      label: '编辑视图 · chat 在右',
-                      hint: '常驻手机 · 独立文件区',
-                      icon: LayoutGrid,
-                    },
-                    {
-                      value: 'platform' as const,
-                      label: '平台视图',
-                      hint: '多项目目录 · 对话 · 预览 + 控制台',
-                      icon: LayoutDashboard,
-                    },
-                  ]
-                ).map((opt) => {
-                  const Icon = opt.icon
-                  const active = layout === opt.value
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => {
-                        setLayout(opt.value)
-                        setLayoutMenuOpen(false)
-                      }}
-                      className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
-                        active
-                          ? 'bg-[var(--color-ink)]/[0.06]'
-                          : 'hover:bg-[var(--fill-subtle)]'
-                      }`}
-                    >
-                      <Icon size={14} className={`mt-0.5 shrink-0 ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/55'}`} />
-                      <span className="flex min-w-0 flex-col gap-0.5">
-                        <span className={`text-[12px] ${active ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink)]/80'}`}>
-                          {opt.label}
-                          {active && (
-                            <span className="ml-1.5 text-[10px] text-[var(--color-ink)]/45">当前</span>
-                          )}
-                        </span>
-                        <span className="text-[10px] text-[var(--color-ink)]/40">
-                          {opt.hint}
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })}
-                <div className="mt-1 border-t border-[var(--divider-soft)] px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-ink)]/40">
                   外观
                 </div>
                 {(
@@ -4428,7 +4507,23 @@ export default function VibeCodingPage() {
               </div>
             )}
           </div>
-          {[Database, Headphones, Clock].map((Icon, i) => (
+          {/* Database — click toggles a centered overlay drawer with the
+               full database module. Primary entry point in condensed
+               scheme; quick-access shortcut in detailed (alongside the
+               数据库 tab). Highlighted when the overlay is open. */}
+          <button
+            type="button"
+            onClick={() => setDatabaseOverlayOpen(!databaseOverlayOpen)}
+            title="数据库"
+            className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
+              databaseOverlayOpen
+                ? 'bg-[var(--color-ink)]/[0.08] text-[var(--color-ink)]'
+                : 'text-[var(--color-ink)]/90 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-ink)]'
+            }`}
+          >
+            <Database size={16} />
+          </button>
+          {[Headphones, Clock].map((Icon, i) => (
             <button
               key={i}
               className="flex items-center justify-center rounded-md p-1.5 text-[var(--color-ink)]/90 transition-colors hover:bg-[var(--color-surface-2)] hover:text-[var(--color-ink)]"
@@ -4437,6 +4532,26 @@ export default function VibeCodingPage() {
             </button>
           ))}
 
+          {/* Condensed-scheme primary 发布 CTA — solid pill at far right.
+               Clicking jumps to the 发布 tab (instead of opening a modal),
+               mirroring the figma reference. Detailed scheme leaves
+               发布 as its own top tab so this CTA is condensed-only. */}
+          {isPlatform &&
+            viewScheme === 'condensed' &&
+            !platformHomeOpen &&
+            !platformSecondaryPageOpen && (
+              <button
+                type="button"
+                onClick={() => setActiveView('publish')}
+                className={`ml-2 flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12.5px] font-medium transition-colors ${
+                  activeView === 'publish'
+                    ? 'bg-[var(--color-ink)] text-[var(--color-ink-contrast)] opacity-90'
+                    : 'bg-[var(--color-ink)] text-[var(--color-ink-contrast)] hover:opacity-90'
+                }`}
+              >
+                发布
+              </button>
+            )}
 
           {/* ── 发布（右上角主 CTA） — platform hides it inside the card-top strip ── */}
           {!isPlatform && (
@@ -4484,7 +4599,7 @@ export default function VibeCodingPage() {
         <aside
           className={`fixed z-30 flex flex-shrink-0 items-center transition-[width] duration-300 ${
             isPlatform
-              ? `top-14 bottom-3 ${previewHidden ? '' : 'border-r border-[var(--divider-soft)]'}`
+              ? `top-14 bottom-3 ${previewHidden ? '' : 'border-r border-[var(--divider)]'}`
               : chatOnLeft
                 ? 'left-5 top-14 bottom-5'
                 : 'right-0 top-0 bottom-0'
@@ -6747,8 +6862,11 @@ export default function VibeCodingPage() {
           (isPlatform && !platformHomeOpen && !platformSecondaryPageOpen)) &&
           // Artifact-shape projects start with no tabs and no synthetic
           // 产物总览 — hide the right preview entirely until at least one
-          // artefact has been generated.
-          !(activeOutputShape === 'artifact' && openTabs.length === 0) && (<>
+          // artefact has been generated. Skip that guard when the user
+          // isn't on the host's preview surface (i.e. the artifact view
+          // system owns the middle column) so non-preview views render
+          // even before the proposal has produced its first doc.
+          (!useHostPreview || !(activeOutputShape === 'artifact' && openTabs.length === 0)) && (<>
 
         {/* ────── Right: Preview Panel. Platform lives inside a shared
              card (painted by the fixed card frame). The preview occupies
@@ -6756,13 +6874,40 @@ export default function VibeCodingPage() {
              margin to align with the card's interior; the rounded/ring
              come from the card frame. ────── */}
         <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${isPlatform ? 'mb-3 mr-3 overflow-hidden rounded-br-[16px]' : ''}`}>
-          {/* tab bar — tabs scroll in the middle; the 项目文件 toggle is
-               pinned to the far right so it stays reachable even when tabs
-               overflow horizontally. Use default align-items: stretch so
-               h-full children (tab buttons, folder toggle) span the bar. */}
+          {/* Non-host views (编辑 / 数据库 / 发布渠道 / 运营数据, and 预览
+               for recall-shape artifacts) take over the middle column.
+               Host preview (mp-page / mp-agent / empty project / unified
+               condensed.产物 mode) falls through to the existing tab bar
+               + phone preview surface. */}
+          {!useHostPreview && (
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <ArtifactViewContent effectiveView={effectiveView} />
+            </div>
+          )}
+          {useHostPreview && <>
+          {/* tab bar — in unified (condensed.产物) mode show the full
+               strip (产物预览 + file tabs all together) so the user can
+               freely flip between them. In detailed.预览 hide the bar
+               (nothing to switch). In detailed.编辑 hide just the
+               产物预览 pseudo-tab below — strip stays for the file
+               tabs. */}
+          {(isUnifiedArtifactMode || effectiveView !== 'preview') && (
           <div className="flex h-10 shrink-0 border-b border-[var(--divider-soft)]">
           <div className="tab-scroll flex h-full min-w-0 flex-1 overflow-x-auto">
             {openTabs.map((tab, i) => {
+              // In detailed.编辑 view, hide the synthetic 产物预览
+              // pseudo-tab — it isn't a file, it lives on the 预览 view
+              // tab instead. In unified mode (condensed.产物), keep all
+              // tabs visible so the user can flip between preview and
+              // file content freely.
+              if (
+                !isUnifiedArtifactMode &&
+                effectiveView === 'edit' &&
+                !tab.closable &&
+                tab.label === '产物预览'
+              ) {
+                return null
+              }
               const isActive = i === activePreviewTab || (!tab.closable && productPinned)
               return (
               <button
@@ -6820,6 +6965,7 @@ export default function VibeCodingPage() {
             <FolderOpen size={15} />
           </button>
           </div>
+          )}{/* close activeView !== 'preview' tab-bar gate */}
 
           {/* ── Content area: tab content (left) + optional file tree (right) ── */}
           <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -7190,12 +7336,42 @@ export default function VibeCodingPage() {
               )
             }
 
-            // Dispatch by the active tab's label. The synthetic 产物预览
-            // tab still falls through to productView (phone/AI-avatar);
-            // every other tab — code files, MD artefacts, dashboards —
-            // routes through renderTab, which knows how to render each
-            // kind from its filename.
+            // View-aware dispatch:
+            //   unified (condensed.产物) → dispatch by active tab as
+            //     original (产物预览 → productView; .md → markdown; etc.)
+            //   detailed.预览 → always productView
+            //   detailed.编辑 → active file tab; empty state if none
             const activeLabel = openTabs[activePreviewTab]?.label
+            if (isUnifiedArtifactMode) {
+              return activeLabel === '产物预览'
+                ? productView
+                : activeLabel
+                  ? renderTab(activeLabel)
+                  : productView
+            }
+            if (effectiveView === 'preview') {
+              return productView
+            }
+            if (effectiveView === 'edit') {
+              if (!activeLabel || activeLabel === '产物预览') {
+                return (
+                  <div className="grid flex-1 place-items-center px-8 py-12 text-center">
+                    <div className="flex max-w-[360px] flex-col items-center gap-2 text-[12px] text-[var(--color-ink)]/55">
+                      <FolderOpen size={20} strokeWidth={1.4} className="text-[var(--color-ink)]/35" />
+                      <div className="text-[13px] font-medium text-[var(--color-ink)]/75">
+                        没有打开的文件
+                      </div>
+                      <div>
+                        点右上角文件夹图标展开项目文件树，选一个文件打开来编辑。
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+              return renderTab(activeLabel)
+            }
+            // Fallback (any other host-driven view) keeps the original
+            // tab-driven dispatch.
             return activeLabel === '产物预览'
               ? productView
               : activeLabel
@@ -7368,6 +7544,7 @@ export default function VibeCodingPage() {
             </div>
           )}
           </div>
+          </>}{/* close {useHostPreview && <>} */}
         </div>
         </>)}
       </div>
@@ -7435,6 +7612,15 @@ export default function VibeCodingPage() {
           )}
         </span>
       )}
+
+      {/* Database overlay — slide-in drawer mounted at the page root so
+           it floats above all other workspace content. Toggled by the
+           database icon in the top-right header cluster. */}
+      <DatabaseOverlay
+        open={databaseOverlayOpen}
+        onClose={() => setDatabaseOverlayOpen(false)}
+        projectId={moduleProjectId}
+      />
     </motion.div>
   )
 }
