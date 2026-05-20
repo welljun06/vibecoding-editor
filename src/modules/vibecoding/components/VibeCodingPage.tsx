@@ -4493,8 +4493,11 @@ export default function VibeCodingPage() {
             activeNodeKindOfActiveProject={activeNodeKind}
             onPickNode={(name, kind) => {
               // If the user clicked a node under a project that isn't
-              // currently active, switch projects first (re-uses the
-              // onSwitchProject path so chat / preview state resets).
+              // currently active, switch projects first. Must mirror the
+              // onSwitchProject branch's openTabs / proposal-state reset
+              // so leaving ops-proposal (which sets openTabs to []) via
+              // a left-sidebar node click doesn't strand the chat in
+              // its centered "previewHidden" position.
               if (name !== projectTitle) {
                 setProjectTitle(name)
                 handleNewSession()
@@ -4505,6 +4508,19 @@ export default function VibeCodingPage() {
                 setActivePreviewTab(0)
                 setPreviewRoute(null)
                 setActiveFilter('mini-program')
+                if (PROJECT_KINDS[name] === 'ops-proposal') {
+                  setProposalStep('collecting')
+                  setProposalGoal(null)
+                  setProposalDocs({})
+                  setStep2BubbleStreamed(false)
+                  setStep3ClosingBubbleStreamed(false)
+                  setChatCleared(false)
+                  setOpenTabs([])
+                } else {
+                  setProposalStep('idle')
+                  setProposalGoal(null)
+                  setOpenTabs([{ label: '产物预览', closable: false }])
+                }
               }
               // Switch the right-side workspace tab. The project may
               // not have a saved tab layout yet — addWorkspaceTab is
@@ -7072,13 +7088,11 @@ export default function VibeCodingPage() {
 
         {(layout === 'workspace' ||
           (isPlatform && !platformHomeOpen && !platformSecondaryPageOpen)) &&
-          // Artifact-shape projects start with no tabs and no synthetic
-          // 产物总览 — hide the right preview entirely until at least one
-          // artefact has been generated. Skip that guard when the user
-          // isn't on the host's preview surface (i.e. the artifact view
-          // system owns the middle column) so non-preview views render
-          // even before the proposal has produced its first doc.
-          (!useHostPreview || !(activeOutputShape === 'artifact' && openTabs.length === 0)) && (<>
+          // `previewHidden` (openTabs.length === 0) is the sentinel for
+          // an ops-proposal project freshly opened with no artefacts —
+          // chat goes full-width and the right preview pane is hidden
+          // until the proposal flow produces its first doc.
+          !previewHidden && (<>
 
         {/* ────── Right: Preview Panel. Platform lives inside a shared
              card (painted by the fixed card frame). The preview occupies
