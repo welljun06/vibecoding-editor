@@ -1,6 +1,5 @@
 import { Bot } from 'lucide-react'
 import type { Capability, Resource } from './ResourceLibraryData'
-import { inferCapabilityTag } from './ResourceLibraryData'
 import {
   formatCallCount,
   formatRelativeDays,
@@ -43,29 +42,6 @@ function hashIdx(s: string, mod: number): number {
   return Math.abs(h) % mod
 }
 
-/* Type-tag palette pulled from Figma — Skill / MCP / knowledge each get
- * their own paired bg + text colour. Pill shape, 12px Semibold. */
-const TYPE_TAG: Record<
-  Capability['type'],
-  { label: string; bg: string; text: string }
-> = {
-  skill: {
-    label: 'Skill',
-    bg: 'bg-[#ece9fe] dark:bg-indigo-500/25',
-    text: 'text-[#5720b7] dark:text-indigo-200',
-  },
-  tool: {
-    label: 'MCP',
-    bg: 'bg-[rgba(60,234,121,0.2)] dark:bg-emerald-500/25',
-    text: 'text-[#007d47] dark:text-emerald-200',
-  },
-  knowledge: {
-    label: '知识库',
-    bg: 'bg-amber-500/15 dark:bg-amber-500/25',
-    text: 'text-amber-700 dark:text-amber-200',
-  },
-}
-
 /* Health pill — icon-only, color-coded background. The bot icon doubles
  * as the AI-managed signal; severity is conveyed by the bg/text pair.
  * Spec: Figma 321:13706. */
@@ -103,7 +79,6 @@ export default function RichCapabilityCard({
   const healthStatus =
     capability.type === 'skill' ? mockHealthStatus(seed) : null
   const healthVisual = healthStatus ? HEALTH_VISUAL[healthStatus] : null
-  const typeTag = TYPE_TAG[capability.type]
   return (
     <button
       type="button"
@@ -124,23 +99,15 @@ export default function RichCapabilityCard({
         />
       </div>
 
-      {/* Body — gap-2.5 (10px) between rows, px-4 pt-2 pb-4 padding. */}
+      {/* Body — gap-2.5 (10px) between rows, px-4 pt-2 pb-4 padding.
+          The secondary-category pill is redundant when cards already
+          live under that secondary's section header, so it's dropped.
+          Health moves onto the title row (right edge). */}
       <div className="flex flex-col gap-2.5 px-4 pb-4 pt-2">
-        <h4 className="line-clamp-1 text-[16px] font-semibold leading-[22px] text-[var(--color-ink)]">
-          {capability.name}
-        </h4>
-
-        <div className="flex flex-nowrap items-center gap-[5px] overflow-hidden">
-          <span
-            className={`inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full px-1.5 py-0.5 text-[12px] font-semibold leading-4 ${typeTag.bg} ${typeTag.text}`}
-          >
-            {typeTag.label}
-          </span>
-          <span className="inline-flex min-w-0 shrink items-center justify-center rounded-full bg-[rgba(115,158,202,0.15)] px-1.5 py-0.5 text-[12px] font-semibold leading-4 text-[#373d46] dark:bg-slate-500/20 dark:text-slate-200">
-            <span className="min-w-0 truncate whitespace-nowrap">
-              {inferCapabilityTag(capability.name)}
-            </span>
-          </span>
+        <div className="flex flex-nowrap items-center gap-2">
+          <h4 className="line-clamp-1 min-w-0 flex-1 text-[16px] font-semibold leading-[22px] text-[var(--color-ink)]">
+            {capability.name}
+          </h4>
           {healthVisual && healthStatus && (
             <span
               title={healthVisual.label}
