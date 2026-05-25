@@ -23,6 +23,7 @@ import ResourceLibraryView, {
   type TypeFilter as ResourceLibraryTypeFilter,
 } from './ResourceLibraryView'
 import PlatformPlaceholderView from './PlatformPlaceholderView'
+import SkillCreatePage from '@/modules/editor/components/platform/SkillCreatePage'
 import ProposalGoalCard, { type ProposalGoalDraft } from './ProposalGoalCard'
 import ProposalDiagnosisCard from './ProposalDiagnosisCard'
 import ProposalAudienceDashboard from './ProposalAudienceDashboard'
@@ -3242,6 +3243,10 @@ export default function VibeCodingPage() {
   // just a data refresh inside the same view).
   const [resourceLibraryMountKey, setResourceLibraryMountKey] = useState(0)
   const [skillsLibraryMountKey, setSkillsLibraryMountKey] = useState(0)
+  /** When true, the Skills page swaps its list for the SkillCreatePage
+   *  (3-column workspace). Auto-reset when the user leaves Skills (see
+   *  the effect below). */
+  const [skillCreateOpen, setSkillCreateOpen] = useState(false)
   // Resets are folded into the open* handlers below so they fire in the
   // same render as setPlatform*Open(true). Doing them in a useEffect
   // post-mount caused the cards pane to paint once with stale state
@@ -3274,6 +3279,12 @@ export default function VibeCodingPage() {
     setSkillsLibraryTypeFilter('skill-tool')
     setSkillsLibraryMountKey((k) => k + 1)
   }
+  /** Auto-close the Skill create page whenever the Skills tab itself
+   *  is closed (e.g. user clicks a project or another nav). Centralizes
+   *  the reset so callers don't need to remember it. */
+  useEffect(() => {
+    if (!platformSkillsOpen) setSkillCreateOpen(false)
+  }, [platformSkillsOpen])
   const openResourceLibraryPage = () => {
     setPlatformHomeOpen(false)
     setPlatformSkillsOpen(false)
@@ -7089,37 +7100,55 @@ export default function VibeCodingPage() {
         )}
 
         {isPlatform && platformSkillsOpen && (
-          <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
-            <ResourceLibraryView
-              key={skillsLibraryMountKey}
-              kind="skill"
-              selectedPrimary={skillsLibraryPrimary}
-              selectedSecondary={skillsLibrarySecondary}
-              selectedCapability={skillsLibraryCapability}
-              expandedPrimary={skillsLibraryExpanded}
-              searchQuery={skillsLibrarySearch}
-              typeFilter={skillsLibraryTypeFilter}
-              onTogglePrimary={toggleSkillsLibraryExpanded}
-              onSelectCategory={(p, s) => {
-                setSkillsLibraryPrimary(p)
-                setSkillsLibrarySecondary(s)
-                setSkillsLibraryCapability(null)
-              }}
-              onSelectCapability={setSkillsLibraryCapability}
-              onSearchChange={setSkillsLibrarySearch}
-              onTypeFilterChange={setSkillsLibraryTypeFilter}
-              onUseCapabilityInChat={useCapabilityInChat}
-              onOpenProject={(name) => {
-                setProjectTitle(name)
-                handleNewSession()
-                setPlatformHomeOpen(false)
-                setPlatformResourceLibraryOpen(false)
-                setSkillsLibraryCapability(null)
-                setPlatformSkillsOpen(false)
-                setPlatformCreativeSquareOpen(false)
-                setActivePreviewTab(0)
-              }}
-            />
+          <div className="relative mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
+            {skillCreateOpen ? (
+              <SkillCreatePage
+                initialSkill={null}
+                onClose={() => setSkillCreateOpen(false)}
+              />
+            ) : (
+              <>
+                <ResourceLibraryView
+                  key={skillsLibraryMountKey}
+                  kind="skill"
+                  selectedPrimary={skillsLibraryPrimary}
+                  selectedSecondary={skillsLibrarySecondary}
+                  selectedCapability={skillsLibraryCapability}
+                  expandedPrimary={skillsLibraryExpanded}
+                  searchQuery={skillsLibrarySearch}
+                  typeFilter={skillsLibraryTypeFilter}
+                  onTogglePrimary={toggleSkillsLibraryExpanded}
+                  onSelectCategory={(p, s) => {
+                    setSkillsLibraryPrimary(p)
+                    setSkillsLibrarySecondary(s)
+                    setSkillsLibraryCapability(null)
+                  }}
+                  onSelectCapability={setSkillsLibraryCapability}
+                  onSearchChange={setSkillsLibrarySearch}
+                  onTypeFilterChange={setSkillsLibraryTypeFilter}
+                  onUseCapabilityInChat={useCapabilityInChat}
+                  onOpenProject={(name) => {
+                    setProjectTitle(name)
+                    handleNewSession()
+                    setPlatformHomeOpen(false)
+                    setPlatformResourceLibraryOpen(false)
+                    setSkillsLibraryCapability(null)
+                    setPlatformSkillsOpen(false)
+                    setPlatformCreativeSquareOpen(false)
+                    setActivePreviewTab(0)
+                  }}
+                />
+                {/* + 新建 Skill — floating CTA over the Skills list. */}
+                <button
+                  type="button"
+                  onClick={() => setSkillCreateOpen(true)}
+                  className="absolute right-4 top-4 z-10 flex h-8 items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-3.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-lg transition-opacity hover:opacity-90"
+                >
+                  <span className="text-[14px] leading-none">+</span>
+                  新建 Skill
+                </button>
+              </>
+            )}
           </div>
         )}
 
