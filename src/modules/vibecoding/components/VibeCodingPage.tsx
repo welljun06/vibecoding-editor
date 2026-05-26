@@ -230,6 +230,20 @@ import {
   Library,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import {
+  ArrowUpIcon as FigmaArrowUpIcon,
+  Bot01Icon,
+  ChevronDownIcon as FigmaChevronDownIcon,
+  Code02Icon,
+  CodeBrowserIcon,
+  FigmaIcon as FigmaBrandIcon,
+  FolderPlusIcon,
+  MessageAiIcon,
+  PaperclipIcon as FigmaPaperclipIcon,
+  PlusIcon as FigmaPlusIcon,
+  Star04Icon,
+  UserCircleIcon,
+} from './figma-icons'
 
 /* ─── Types ─── */
 interface RadioOption {
@@ -1317,27 +1331,11 @@ function SpaceMenuPopover({
   )
 }
 
-/** Inline Figma brand icon — matches the Figma design's `figma` glyph. */
-function FigmaIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      aria-hidden
-    >
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M2.6665 3.33325C2.6665 1.6764 4.00965 0.333252 5.6665 0.333252H10.3332C11.99 0.333252 13.3332 1.6764 13.3332 3.33325C13.3332 4.27567 12.8986 5.1166 12.2189 5.66659C12.8986 6.21657 13.3332 7.0575 13.3332 7.99992C13.3332 9.65677 11.99 10.9999 10.3332 10.9999C9.71646 10.9999 9.1432 10.8138 8.6665 10.4947V12.6666C8.6665 14.3234 7.32336 15.6666 5.6665 15.6666C4.00965 15.6666 2.6665 14.3234 2.6665 12.6666C2.6665 11.7242 3.10106 10.8832 3.78073 10.3333C3.10106 9.78327 2.6665 8.94234 2.6665 7.99992C2.6665 7.0575 3.10106 6.21657 3.78073 5.66658C3.10106 5.1166 2.6665 4.27567 2.6665 3.33325ZM5.6665 6.33325C4.74603 6.33325 3.99984 7.07944 3.99984 7.99992C3.99984 8.92039 4.74603 9.66658 5.6665 9.66658H7.33317V6.33325H5.6665ZM7.33317 4.99992H5.6665C4.74603 4.99992 3.99984 4.25373 3.99984 3.33325C3.99984 2.41278 4.74603 1.66659 5.6665 1.66659H7.33317V4.99992ZM10.3332 4.99992C11.2536 4.99992 11.9998 4.25373 11.9998 3.33325C11.9998 2.41278 11.2536 1.66659 10.3332 1.66659H8.6665V4.99992H10.3332ZM10.3332 6.33325C9.4127 6.33325 8.6665 7.07944 8.6665 7.99992C8.6665 8.92039 9.4127 9.66658 10.3332 9.66658C11.2536 9.66658 11.9998 8.92039 11.9998 7.99992C11.9998 7.07944 11.2536 6.33325 10.3332 6.33325ZM7.33317 10.9999H5.6665C4.74603 10.9999 3.99984 11.7461 3.99984 12.6666C3.99984 13.5871 4.74603 14.3333 5.6665 14.3333C6.58698 14.3333 7.33317 13.5871 7.33317 12.6666V10.9999Z"
-        fill="currentColor"
-      />
-    </svg>
-  )
-}
+/** FigmaIcon (project-local alias) — re-exports the figma-exported
+ *  brand icon under the original name so existing call sites keep
+ *  working without rename. The pixel-accurate SVG lives in
+ *  `./figma-icons.tsx`. */
+const FigmaIcon = FigmaBrandIcon
 
 /* ─── Platform home (new-project landing) ─── */
 
@@ -1350,6 +1348,34 @@ const HOME_SUGGESTIONS = [
   '视频误伤分析',
   '产出调研报告',
   '生成业务介绍图',
+]
+
+/** Project-type tabs shown above the home composer. Switching a tab
+ *  swaps the textarea placeholder; the final submission is routed by
+ *  the host via `onSubmit`. Order + icons mirror figma node 324:27443
+ *  (业务助手 first / active by default; smart-agent last). */
+type HomeTabId = 'business-assistant' | 'ai-avatar' | 'mini-program' | 'h5' | 'smart-agent'
+
+/** Tab-icon signature — figma-exported components carry an extra
+ *  `gradient` flag that, when true, fills the path(s) with the AI
+ *  brand gradient (used to highlight the active tab). */
+type TabIconComponent = React.ComponentType<{
+  size?: number
+  className?: string
+  gradient?: boolean
+}>
+
+const HOME_TABS: {
+  id: HomeTabId
+  label: string
+  icon: TabIconComponent
+  placeholder: string
+}[] = [
+  { id: 'business-assistant', label: '业务助手', icon: MessageAiIcon, placeholder: '描述业务助手要处理的场景' },
+  { id: 'ai-avatar', label: 'AI分身', icon: UserCircleIcon, placeholder: '选择 IP 或描述你想要生成的视频' },
+  { id: 'mini-program', label: '小程序', icon: Code02Icon, placeholder: '描述你想要生成的小程序场景' },
+  { id: 'h5', label: 'H5界面', icon: CodeBrowserIcon, placeholder: '描述你想要搭建的 H5 界面' },
+  { id: 'smart-agent', label: '智能体', icon: Bot01Icon, placeholder: '描述智能体要完成的任务' },
 ]
 
 type AiMode = 'coding' | 'business' | 'orchestration'
@@ -1411,6 +1437,7 @@ function PlatformHome({
 }) {
   const isLight = useThemeStore((s) => s.mode) === 'light'
   const [aiMode, setAiMode] = useState<AiMode>('coding')
+  const [activeTab, setActiveTab] = useState<HomeTabId>('business-assistant')
   const [aiMenuPos, setAiMenuPos] = useState<{ top: number; left: number } | null>(null)
   const aiBtnRef = useRef<HTMLButtonElement>(null)
   const aiMenuRef = useRef<HTMLDivElement>(null)
@@ -1430,147 +1457,146 @@ function PlatformHome({
     document.addEventListener('pointerdown', handler)
     return () => document.removeEventListener('pointerdown', handler)
   }, [aiMenuPos])
-  const currentMode = AI_MODES.find((m) => m.id === aiMode) ?? AI_MODES[0]
-  const CurrentIcon = currentMode.icon
+  const activeTabMeta = HOME_TABS.find((t) => t.id === activeTab) ?? HOME_TABS[0]
   return (
     <div
       className={`relative my-3 mr-3 flex min-w-0 flex-1 flex-col items-center justify-center overflow-hidden rounded-[16px] px-6 pb-24 pt-6 ${
         isLight ? 'bg-white' : 'bg-[var(--color-surface-0)]'
       }`}
     >
-      {/* Ambient illustration — grainy pastel glow pinned to the top-right.
-           Only shown in light mode; dark mode keeps the flat surface. */}
-      {isLight && (
-        <img
-          aria-hidden
-          src="/bg/platform-home-glow.png"
-          alt=""
-          className="pointer-events-none absolute right-0 top-0 h-auto w-[720px] max-w-[70%] select-none object-contain object-right-top"
-        />
-      )}
+      {/* Hero — single-line title per figma node 324:27087.
+       *  Both halves use text-0 (full ink). Hierarchy is conveyed
+       *  by font-weight alone: semibold for the product name, light
+       *  for the slogan. Separator ｜ stays soft-grey. */}
+      <h1 className="relative text-center text-[28px] tracking-[0.5px] text-[var(--color-ink)]">
+        <span className="font-semibold">抖音AI工坊</span>
+        <span className="mx-3 font-light text-[var(--color-ink)]/30">｜</span>
+        <span className="font-light">所见即所得，链接抖音生态</span>
+      </h1>
 
-      {/* Hero */}
-      <div className="relative flex flex-col items-center gap-2">
-        <div className="text-center font-semibold tracking-[0.64px] text-[var(--color-ink)]">
-          <span className="text-[32px]">抖音</span>
-          <span className="text-[16px]"> </span>
-          <span className="text-[32px]">AI</span>
-          <span className="text-[16px]"> </span>
-          <span className="text-[32px]">打开无限可能</span>
-        </div>
-        <p className="text-[16px] leading-[22px] text-[var(--color-ink)]/60">
-          所见即所得，一站式满足需求
-        </p>
-      </div>
-
-      {/* Prompt composer — h-[140px] fixed card, content justified to the
-           bottom (textarea grows upward from the action row). */}
-      <div className="relative mt-6 w-full max-w-[810px]">
-        <div className="relative flex h-[140px] flex-col justify-end gap-2 overflow-hidden rounded-[16px] bg-[var(--color-surface-0)] p-3 shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_10px_15px_-5px_rgba(0,0,0,0.05)]">
-          {/* rainbow tint */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-4 blur-[20px]"
-            style={{
-              backgroundImage:
-                'linear-gradient(0deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 100%), linear-gradient(98deg, rgba(255,186,51,0.15) 7.59%, rgba(78,217,44,0.15) 23.2%, rgba(69,146,242,0.15) 44.7%, rgba(110,124,253,0.15) 66.3%, rgba(225,53,248,0.15) 92.3%)',
-            }}
-          />
-
-          <div className="relative flex min-h-0 flex-1 flex-col pl-3 pt-1">
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  onSubmit(draft)
-                }
-              }}
-              placeholder="请描述你遇到的具体业务痛点或需求..."
-              rows={1}
-              className="block w-full resize-none bg-transparent text-[14px] leading-[22px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink)]/60"
-            />
+      {/* Composer block per figma 324:27443 — outer cream card holds
+       *  the tabs row at top-left (pt-2 only) + a white inner card
+       *  whose rounded corners flush with the outer card's bottom. */}
+      <div className="relative mt-8 w-full max-w-[810px]">
+        <div className="flex flex-col items-start gap-2 overflow-hidden rounded-[24px] bg-[rgba(242,242,247,0.8)] pt-2 shadow-[0_8px_12px_4px_rgba(255,255,255,0.12)]">
+          {/* Tabs row — gap-1.5 (6px) between tabs, pl-2 only. Active
+               tab uses the AI brand gradient on its icon. */}
+          <div className="flex items-center justify-center gap-1.5 pl-2">
+            {HOME_TABS.map((t) => {
+              const Icon = t.icon
+              const isActive = activeTab === t.id
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setActiveTab(t.id)}
+                  className={`flex h-9 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 text-[var(--color-ink)]/80 transition-all ${
+                    isActive ? 'bg-white font-semibold' : 'hover:bg-white/40'
+                  }`}
+                >
+                  <Icon size={16} gradient={isActive} />
+                  <span className="text-[14px] leading-6 whitespace-nowrap">{t.label}</span>
+                </button>
+              )
+            })}
           </div>
 
-          <div className="relative flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                ref={aiBtnRef}
-                type="button"
-                onClick={() => {
-                  if (aiMenuPos) {
-                    setAiMenuPos(null)
-                    return
+          {/* Composer body — inner white card, rounded-24 aligns with
+               outer's bottom corners. Subtle border + soft backdrop. */}
+          <div className="flex w-full flex-col rounded-[24px] border border-[#e6eaed] bg-white backdrop-blur-[12px]">
+            {/* Placeholder / textarea region — fixed 79px tall per figma */}
+            <div className="flex h-[79px] flex-col pb-2 pl-5 pr-3 pt-5">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    onSubmit(draft)
                   }
-                  const rect = aiBtnRef.current?.getBoundingClientRect()
-                  if (rect) setAiMenuPos({ top: rect.bottom + 8, left: rect.left })
                 }}
-                className="flex h-9 items-center gap-1.5 rounded-full border border-[var(--divider)] px-4 text-[14px] font-semibold text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-              >
-                <CurrentIcon size={16} strokeWidth={1.8} />
-                {currentMode.label}
-              </button>
-              <button
-                type="button"
-                className="flex h-9 items-center gap-1 rounded-full border border-[var(--divider)] px-4 text-[14px] font-semibold text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-              >
-                <FolderCode size={16} strokeWidth={1.8} />
-                资源
-              </button>
-              <button
-                type="button"
-                aria-label="附件"
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--divider)] text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-              >
-                <Paperclip size={16} strokeWidth={1.8} />
-              </button>
-              <button
-                type="button"
-                aria-label="Figma"
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--divider)] text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-              >
-                <FigmaIcon size={16} />
-              </button>
+                placeholder={activeTabMeta.placeholder}
+                rows={1}
+                className="block w-full resize-none bg-transparent text-[14px] leading-[22px] text-[var(--color-ink)] outline-none placeholder:text-[rgba(28,31,35,0.35)]"
+              />
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="flex h-9 items-center gap-1 rounded-full px-4 text-[14px] font-semibold text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
-              >
-                Auto
-                <ChevronDown size={16} strokeWidth={1.8} />
-              </button>
-              <button
-                type="button"
-                aria-label="发送"
-                onClick={() => onSubmit(draft)}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-ink)] text-[var(--color-ink-contrast)] transition-all hover:-translate-y-[1px] hover:opacity-90"
-              >
-                <ArrowUp size={16} strokeWidth={2} />
-              </button>
+
+            {/* Toolbar — all icons are figma-exported SVG (figma-icons.tsx).
+                 Buttons use text-1 (`/80`) and pick up `currentColor`. */}
+            <div className="flex items-center justify-between p-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="flex h-9 items-center gap-1 rounded-full px-4 py-1.5 text-[14px] font-semibold leading-5 text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)]"
+                >
+                  <FolderPlusIcon size={16} />
+                  资源
+                </button>
+                <button
+                  type="button"
+                  aria-label="附件"
+                  className="flex h-9 w-9 items-center justify-center rounded-full p-2 text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)]"
+                >
+                  <FigmaPaperclipIcon size={16} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Figma"
+                  className="flex h-9 w-9 items-center justify-center rounded-full p-2 text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)]"
+                >
+                  <FigmaIcon size={16} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  ref={aiBtnRef}
+                  type="button"
+                  onClick={() => {
+                    if (aiMenuPos) {
+                      setAiMenuPos(null)
+                      return
+                    }
+                    const rect = aiBtnRef.current?.getBoundingClientRect()
+                    if (rect) setAiMenuPos({ top: rect.bottom + 8, left: rect.left - 200 })
+                  }}
+                  className="flex h-9 items-center gap-1 rounded-full px-4 py-1.5 text-[14px] font-semibold leading-5 text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)]"
+                >
+                  <Star04Icon size={16} />
+                  Auto
+                  <FigmaChevronDownIcon size={16} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="发送"
+                  onClick={() => onSubmit(draft)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1c1f23] p-2 text-white transition-all hover:-translate-y-[1px] hover:opacity-90"
+                >
+                  <FigmaArrowUpIcon size={16} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Suggestions header */}
-      <div className="relative mt-6 flex items-center gap-2 text-[var(--color-ink)]/60">
+      <div className="relative mt-6 flex items-center gap-2 text-[var(--color-ink)]/55">
         <Sparkles size={12} />
-        <p className="text-[14px] leading-[22px]">没有灵感？试试点击以下需求</p>
+        <p className="text-[13px] leading-[22px]">没有灵感？试试点击以下需求</p>
       </div>
 
-      {/* Suggestions */}
-      <div className="relative mt-4 flex w-full max-w-[810px] flex-wrap items-center justify-center gap-3">
+      {/* Suggestions — pastel-grey rounded chips with trailing ↗ arrow.
+           Wraps freely; figma shows ~3 + ~5 layout but content-driven. */}
+      <div className="relative mt-3 flex w-full max-w-[820px] flex-wrap items-center justify-center gap-2.5">
         {HOME_SUGGESTIONS.map((s) => (
           <button
             key={s}
             type="button"
             onClick={() => onSubmit(s)}
-            className="flex h-[42px] items-center gap-2 rounded-[12px] bg-[var(--fill-subtle)] px-4 text-[14px] leading-5 text-[var(--color-ink)] transition-colors hover:bg-[var(--fill-hover)]"
+            className="flex h-9 items-center gap-1.5 rounded-full bg-[var(--fill-subtle)] px-3.5 text-[13px] leading-5 text-[var(--color-ink)]/85 transition-colors hover:bg-[var(--fill-hover)] hover:text-[var(--color-ink)]"
           >
             <span>{s}</span>
-            <ArrowUpRight size={12} className="text-[var(--color-ink)]/60" />
+            <ArrowUpRight size={12} className="text-[var(--color-ink)]/45" />
           </button>
         ))}
       </div>
@@ -1907,7 +1933,7 @@ function PlatformSidebar({
               const rect = spaceBtnRef.current?.getBoundingClientRect()
               if (rect) setSpaceMenuPos({ top: rect.bottom + 6, left: rect.left })
             }}
-            className="flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded text-[12px] text-[var(--color-ink)]/55 transition-colors hover:text-[var(--color-ink)]/85"
+            className="flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded text-[12px] text-[var(--color-ink)] transition-colors hover:opacity-80"
           >
             {activeSpace}
             <ChevronDown size={12} className={`transition-transform ${spaceMenuPos ? 'rotate-180' : ''}`} />
@@ -1922,21 +1948,24 @@ function PlatformSidebar({
         </button>
       </div>
 
-      {/* + 新建项目 */}
+      {/* AI 创作 CTA — figma node 2294:12838.
+           Black filled pill, px-4 py-1.5 (6px top/bottom), gap-2.
+           13px Medium white label, left-aligned. Plus icon is the
+           figma-exported 18px glyph (12×12 stroke). */}
       <div className="px-3 pt-4">
         <button
           onClick={onNewProject}
-          className="flex h-8 w-full items-center justify-center gap-1.5 rounded-full bg-[var(--color-ink)] text-[13px] font-medium text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
+          className="flex w-full items-center justify-start gap-2 rounded-full bg-black px-4 py-1.5 text-[13px] font-medium leading-5 text-white transition-opacity hover:opacity-90"
         >
-          <Plus size={14} strokeWidth={2} />
-          新建项目
+          <FigmaPlusIcon size={18} />
+          AI 创作
         </button>
       </div>
 
       {/* Platform nav — pill-shaped rows with cool-gray tint when selected.
            Styling aligned with the Figma design: 13px semibold, 16px icons
-           inheriting text color, 6px gap, rounded-full container. */}
-      <nav className="mt-3 flex flex-col gap-2 px-3">
+           inheriting text color, 4px gap between items, rounded-full container. */}
+      <nav className="mt-3 flex flex-col gap-1 px-3">
         {(
           [
             { label: 'Skills', icon: FolderCode },
@@ -2018,7 +2047,7 @@ function PlatformSidebar({
         /* ── List: every project, inline 产物视图 ── */
         <>
           {/* 项目列表 header */}
-          <div className="mt-4 flex shrink-0 items-center justify-between px-5 py-1.5">
+          <div className="mt-3 flex shrink-0 items-center justify-between px-5 py-1.5">
             <span className="text-[12px] text-[var(--color-ink)]/55">项目列表</span>
             <div className="flex items-center gap-1 text-[var(--color-ink)]/40">
               <button
@@ -7107,47 +7136,37 @@ export default function VibeCodingPage() {
                 onClose={() => setSkillCreateOpen(false)}
               />
             ) : (
-              <>
-                <ResourceLibraryView
-                  key={skillsLibraryMountKey}
-                  kind="skill"
-                  selectedPrimary={skillsLibraryPrimary}
-                  selectedSecondary={skillsLibrarySecondary}
-                  selectedCapability={skillsLibraryCapability}
-                  expandedPrimary={skillsLibraryExpanded}
-                  searchQuery={skillsLibrarySearch}
-                  typeFilter={skillsLibraryTypeFilter}
-                  onTogglePrimary={toggleSkillsLibraryExpanded}
-                  onSelectCategory={(p, s) => {
-                    setSkillsLibraryPrimary(p)
-                    setSkillsLibrarySecondary(s)
-                    setSkillsLibraryCapability(null)
-                  }}
-                  onSelectCapability={setSkillsLibraryCapability}
-                  onSearchChange={setSkillsLibrarySearch}
-                  onTypeFilterChange={setSkillsLibraryTypeFilter}
-                  onUseCapabilityInChat={useCapabilityInChat}
-                  onOpenProject={(name) => {
-                    setProjectTitle(name)
-                    handleNewSession()
-                    setPlatformHomeOpen(false)
-                    setPlatformResourceLibraryOpen(false)
-                    setSkillsLibraryCapability(null)
-                    setPlatformSkillsOpen(false)
-                    setPlatformCreativeSquareOpen(false)
-                    setActivePreviewTab(0)
-                  }}
-                />
-                {/* + 新建 Skill — floating CTA over the Skills list. */}
-                <button
-                  type="button"
-                  onClick={() => setSkillCreateOpen(true)}
-                  className="absolute right-4 top-4 z-10 flex h-8 items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-3.5 text-[12px] font-medium text-[var(--color-ink-contrast)] shadow-lg transition-opacity hover:opacity-90"
-                >
-                  <span className="text-[14px] leading-none">+</span>
-                  新建 Skill
-                </button>
-              </>
+              <ResourceLibraryView
+                key={skillsLibraryMountKey}
+                kind="skill"
+                selectedPrimary={skillsLibraryPrimary}
+                selectedSecondary={skillsLibrarySecondary}
+                selectedCapability={skillsLibraryCapability}
+                expandedPrimary={skillsLibraryExpanded}
+                searchQuery={skillsLibrarySearch}
+                typeFilter={skillsLibraryTypeFilter}
+                onTogglePrimary={toggleSkillsLibraryExpanded}
+                onSelectCategory={(p, s) => {
+                  setSkillsLibraryPrimary(p)
+                  setSkillsLibrarySecondary(s)
+                  setSkillsLibraryCapability(null)
+                }}
+                onSelectCapability={setSkillsLibraryCapability}
+                onSearchChange={setSkillsLibrarySearch}
+                onTypeFilterChange={setSkillsLibraryTypeFilter}
+                onUseCapabilityInChat={useCapabilityInChat}
+                onOpenProject={(name) => {
+                  setProjectTitle(name)
+                  handleNewSession()
+                  setPlatformHomeOpen(false)
+                  setPlatformResourceLibraryOpen(false)
+                  setSkillsLibraryCapability(null)
+                  setPlatformSkillsOpen(false)
+                  setPlatformCreativeSquareOpen(false)
+                  setActivePreviewTab(0)
+                }}
+                onCreateSkill={() => setSkillCreateOpen(true)}
+              />
             )}
           </div>
         )}

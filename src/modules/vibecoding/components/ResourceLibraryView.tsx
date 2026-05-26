@@ -144,6 +144,9 @@ interface ResourceLibraryViewProps {
   /** Switch to a project (called from the lineage section in detail
    *  views). Also closes the resource library page. */
   onOpenProject: (projectName: string) => void
+  /** Triggered when user picks the Skills option in the filter-area
+   *  「+ 创建」popover. Host opens the SkillCreatePage in response. */
+  onCreateSkill?: () => void
 }
 
 const buildTypeTabs = (
@@ -219,6 +222,7 @@ export default function ResourceLibraryView({
   onTypeFilterChange,
   onUseCapabilityInChat,
   onOpenProject,
+  onCreateSkill,
 }: ResourceLibraryViewProps) {
   const tree = useMemo(() => buildCapabilityTree(kind), [kind])
   const typeTabs = useMemo(() => buildTypeTabs(kind), [kind])
@@ -741,7 +745,7 @@ export default function ResourceLibraryView({
                 />
               </div>
 
-              <CreateButton />
+              <CreateButton onCreateSkill={onCreateSkill} />
             </div>
           </div>
         </div>
@@ -1732,10 +1736,17 @@ function SceneModeToggle({
 
 /** Black pill "创建" button that reveals a 2-option popover (Skills /
  *  工具) on hover. Both the button and popover share a `group` wrapper
- *  so moving the cursor onto the popover keeps it open. */
-function CreateButton() {
-  const options: { id: 'skill' | 'tool'; label: string; hint: string; icon: LucideIcon }[] = [
-    { id: 'skill', label: 'Skills', hint: '定制特定任务的执行逻辑', icon: FolderCode },
+ *  so moving the cursor onto the popover keeps it open. Skills option
+ *  is wired through `onCreateSkill` when provided. */
+function CreateButton({ onCreateSkill }: { onCreateSkill?: () => void }) {
+  const options: {
+    id: 'skill' | 'tool'
+    label: string
+    hint: string
+    icon: LucideIcon
+    onClick?: () => void
+  }[] = [
+    { id: 'skill', label: 'Skills', hint: '定制特定任务的执行逻辑', icon: FolderCode, onClick: onCreateSkill },
     { id: 'tool', label: '工具', hint: '接入外部系统与 API 服务', icon: Wrench },
   ]
   return (
@@ -1754,6 +1765,7 @@ function CreateButton() {
             <button
               key={o.id}
               type="button"
+              onClick={o.onClick}
               className="flex w-full items-center gap-2.5 rounded-lg p-3 text-left transition-colors hover:bg-[var(--fill-hover)]"
             >
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--fill-subtle)] text-[var(--color-ink)]/80">
