@@ -16,7 +16,11 @@ import { useThemeStore } from '@/shared/storage/theme'
 import MiniAppPreview from './MiniAppPreview'
 import WebAppPreview from './WebAppPreview'
 import AiPersonaChatPreview, { type TriggerSimulation } from './AiPersonaChatPreview'
-import MentionPicker, { type MentionItem } from './MentionPicker'
+import MentionPicker, {
+  type MentionItem,
+  type MentionSection,
+  type MentionTab,
+} from './MentionPicker'
 import TriggerDetailView from './TriggerDetailView'
 import { ChatFormCard, ChatFormStep, ChatFormSubmit } from './ChatFormCard'
 import ResourceLibraryView, {
@@ -55,7 +59,12 @@ import {
 import MarkdownView from './MarkdownView'
 import {
   RESOURCES,
+  PLAZA_PRIMARIES,
+  buildCapabilityTree,
+  inferCapabilityPrimaryForResource,
+  inferCapabilitySecondary,
   type Capability,
+  type CapabilityType,
   type NewPrimaryCategory as PrimaryCategory,
   type Resource,
 } from './ResourceLibraryData'
@@ -574,6 +583,10 @@ const MENTION_ICON_PATHS: Record<MentionKind, string[]> = {
   tools: [
     'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
   ],
+  knowledge: [
+    'M2 3h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z',
+    'M22 3h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z',
+  ],
   files: [
     'M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4',
     'M14 2v4a2 2 0 0 0 2 2h4',
@@ -589,9 +602,20 @@ const MENTION_ICON_PATHS: Record<MentionKind, string[]> = {
     'M8 8v12',
     'M4 4v16',
   ],
+  all: [
+    'm12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z',
+    'm6.08 9.5-3.5 1.6a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.47-1.59',
+  ],
 }
 
-type MentionKind = 'skills' | 'tools' | 'files' | 'triggers' | 'resources'
+type MentionKind =
+  | 'all'
+  | 'skills'
+  | 'tools'
+  | 'knowledge'
+  | 'files'
+  | 'triggers'
+  | 'resources'
 
 /** Create a small SVG glyph element for a mention kind. Inline SVG so
  *  the pill renders without requiring React to mount a component. */
@@ -1380,6 +1404,116 @@ const HOME_TABS: {
 ]
 
 type AiMode = 'coding' | 'business' | 'orchestration'
+/** PlatformHome @-mention catalogue. All three picker tabs (Skills /
+ *  工具 / 知识库) read from the same RESOURCES.capabilities source and
+ *  use the same primary-category tree as ResourceLibraryView — so the
+ *  rail mirrors what the user sees in the resource library left pane.
+ *  Each item's tag carries the secondary leaf so the in-list grouping
+ *  is still visible without a second-tier rail.
+ *
+ *  Platform-level "资源" entries are intentionally omitted — the user
+ *  references concrete capabilities, not the wrapping platform.
+ *
+ *  Sections are stable per build, so we materialise them once at module
+ *  load instead of per-render. */
+/** Group platform capabilities of one kind by the new primary
+ *  category, ordered by `buildCapabilityTree` so the picker rail
+ *  mirrors the resource library's left tree exactly. Each item carries
+ *  the secondary as a tag so the user sees the leaf-level grouping
+ *  without needing a second tier in the rail.
+ *
+ *  When a primary has zero capabilities of this kind, it's dropped
+ *  from the section list — matches what the resource library renders
+ *  when filtering by kind. */
+function buildCapabilitySectionsHome(
+  kind: CapabilityType,
+  groupLabel: string,
+  tabKind: MentionTab,
+): MentionSection[] {
+  // Bucket items by (primary, secondary) — gives us the same 2-level
+  // tree as buildCapabilityTree(kind), so the picker rail can mirror
+  // ResourceLibraryView exactly.
+  type Bucket = Map<string, MentionItem[]>
+  const buckets = new Map<PrimaryCategory, Bucket>()
+  // Capability names aren't unique within (or across) a platform — the
+  // same name can appear under multiple categories, and platforms reuse
+  // common names like "TeaCli". Dedupe via a running counter so React
+  // keys stay unique.
+  const seen = new Map<string, number>()
+  for (const r of RESOURCES) {
+    for (const c of r.capabilities) {
+      if (c.type !== kind) continue
+      const primary = inferCapabilityPrimaryForResource(c.name, r)
+      const secondary = inferCapabilitySecondary(c.name)
+      if (!buckets.has(primary)) buckets.set(primary, new Map())
+      const innerBucket = buckets.get(primary)!
+      if (!innerBucket.has(secondary)) innerBucket.set(secondary, [])
+      const baseId = `${r.id}:${c.name}:${c.category ?? ''}`
+      const dup = (seen.get(baseId) ?? 0) + 1
+      seen.set(baseId, dup)
+      const id = dup === 1 ? baseId : `${baseId}#${dup}`
+      innerBucket.get(secondary)!.push({
+        id,
+        name: c.name,
+        tag: r.name,
+      })
+    }
+  }
+  // Walk the tree's primary + secondary order so the rail order matches
+  // ResourceLibraryView. Empty (primary, secondary) buckets are dropped.
+  // Each primary is tagged with its top-level aggregator (广场 vs 空间)
+  // so the picker rail shows the same three-tier hierarchy as
+  // ResourceCategoryTree (aggregator → primary → secondary).
+  const plazaSet = new Set<PrimaryCategory>(PLAZA_PRIMARIES)
+  const out: MentionSection[] = []
+  for (const node of buildCapabilityTree(kind)) {
+    const inner = buckets.get(node.primary)
+    if (!inner) continue
+    const aggregator = plazaSet.has(node.primary) ? '广场' : '空间'
+    for (const sec of node.secondaries) {
+      const items = inner.get(sec)
+      if (!items || items.length === 0) continue
+      out.push({
+        id: `${kind}-${node.primary}-${sec}`,
+        label: sec,
+        parent: node.primary,
+        aggregator,
+        group: groupLabel,
+        itemKind: tabKind,
+        items,
+      })
+    }
+  }
+  return out
+}
+
+const HOME_SKILL_SECTIONS: MentionSection[] = buildCapabilitySectionsHome(
+  'skill',
+  'Skills',
+  'skills',
+)
+const HOME_TOOL_SECTIONS: MentionSection[] = buildCapabilitySectionsHome(
+  'tool',
+  '工具',
+  'tools',
+)
+const HOME_KNOWLEDGE_SECTIONS: MentionSection[] = buildCapabilitySectionsHome(
+  'knowledge',
+  '知识库',
+  'knowledge',
+)
+const HOME_ALL_SECTIONS: MentionSection[] = [
+  ...HOME_SKILL_SECTIONS,
+  ...HOME_TOOL_SECTIONS,
+  ...HOME_KNOWLEDGE_SECTIONS,
+]
+const HOME_SECTIONS_BY_TAB: Partial<Record<MentionTab, MentionSection[]>> = {
+  all: HOME_ALL_SECTIONS,
+  skills: HOME_SKILL_SECTIONS,
+  tools: HOME_TOOL_SECTIONS,
+  knowledge: HOME_KNOWLEDGE_SECTIONS,
+}
+
 const AI_MODES: { id: AiMode; label: string; desc: string; icon: typeof Code2 }[] = [
   {
     id: 'coding',
@@ -1442,6 +1576,128 @@ function PlatformHome({
   const [aiMenuPos, setAiMenuPos] = useState<{ top: number; left: number } | null>(null)
   const aiBtnRef = useRef<HTMLButtonElement>(null)
   const aiMenuRef = useRef<HTMLDivElement>(null)
+  /* @mention picker — opens when the user types "@" in the composer
+   *  textarea or clicks the 资源 toolbar button. Scoped to Skills + 资源
+   *  here so the home picker stays focused on those two surfaces; the
+   *  full 5-tab variant lives in the workspace composer. */
+  // ContentEditable editor — picker insertions land as inline pill
+  // nodes (.mention-pill) so the textarea displays them as chips
+  // instead of plain "@name" text. The picker panel itself stays
+  // plain-text rows; only the inserted result is styled.
+  const editorRef = useRef<HTMLDivElement>(null)
+  // The composer body wraps editor + toolbar. Picker uses it as the
+  // anchor when the 资源 button is clicked, so dropping below clears
+  // the 资源/发送 buttons cleanly.
+  const composerCardRef = useRef<HTMLDivElement>(null)
+  const [mentionAnchor, setMentionAnchor] = useState<
+    { left: number; top: number; bottom: number; width: number } | null
+  >(null)
+  // 'insert' = `@` typed in editor → click row inserts a mention pill.
+  // 'manage' = 资源 button clicked → rows carry toggle switches that
+  //            flip the capability-enable-store entry on / off.
+  const [mentionMode, setMentionMode] = useState<'insert' | 'manage'>('insert')
+  /** Sync the editor's plain-text projection back to React state so
+   *  Enter-to-send / suggestion-chip submit keeps working. */
+  const syncDraftFromEditor = () => {
+    const el = editorRef.current
+    if (!el) return
+    setDraft(el.innerText)
+  }
+  // External `draft` updates (e.g. parent resets) should reflect in the
+  // editor. We only rewrite innerText when it actually diverges so the
+  // caret doesn't get bounced around during normal typing.
+  useEffect(() => {
+    const el = editorRef.current
+    if (!el) return
+    if (el.innerText !== draft) el.innerText = draft
+  }, [draft])
+  /** Anchor the picker to the whole composer card. Used by the toolbar
+   *  button — no caret to track, so the wide composer reads best. */
+  const openMentionPickerAtComposer = () => {
+    const el = composerCardRef.current ?? editorRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setMentionMode('manage')
+    setMentionAnchor({
+      left: rect.left,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+    })
+  }
+  /** Anchor the picker at the caret — used when the user just typed
+   *  `@`. The selection's bounding rect gives us the caret coordinates
+   *  directly; we use a single-line-tall anchor so the picker drops
+   *  right under the `@` glyph. */
+  const openMentionPickerAtCaret = () => {
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0).cloneRange()
+    range.collapse(true)
+    const rect = range.getBoundingClientRect()
+    const usable = rect.height > 0 || rect.left !== 0 || rect.top !== 0
+    setMentionMode('insert')
+    if (usable) {
+      setMentionAnchor({
+        left: rect.left,
+        top: rect.top,
+        bottom: rect.bottom || rect.top + 22,
+        width: 0,
+      })
+    } else {
+      // Caret at start of an empty editor — getBoundingClientRect can
+      // return zeros there. Fall back to the editor's own rect.
+      const el = editorRef.current
+      if (!el) return
+      const er = el.getBoundingClientRect()
+      setMentionAnchor({
+        left: er.left,
+        top: er.top,
+        bottom: er.bottom,
+        width: 0,
+      })
+    }
+  }
+  /** Insert a mention as a non-editable pill span. The just-typed `@`
+   *  token (if any) is removed first so the pill replaces it cleanly. */
+  const insertMention = (item: MentionItem, kind: MentionKind) => {
+    const el = editorRef.current
+    if (!el) return
+    el.focus()
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) {
+      // No active selection — fall through to a plain append.
+      const pill = buildMentionPill(item, kind)
+      el.append(pill, document.createTextNode(' '))
+      syncDraftFromEditor()
+      setMentionAnchor(null)
+      return
+    }
+    const range = sel.getRangeAt(0)
+    const node = range.endContainer
+    const offset = range.endOffset
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? ''
+      const atIdx = text.lastIndexOf('@', offset - 1)
+      if (atIdx >= 0) {
+        const deleteRange = document.createRange()
+        deleteRange.setStart(node, atIdx)
+        deleteRange.setEnd(node, offset)
+        deleteRange.deleteContents()
+        // deleteContents leaves the caret at the deletion point.
+      }
+    }
+    const pill = buildMentionPill(item, kind)
+    const space = document.createTextNode(' ')
+    range.insertNode(space)
+    range.insertNode(pill)
+    range.setStartAfter(space)
+    range.setEndAfter(space)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    syncDraftFromEditor()
+    setMentionAnchor(null)
+  }
   useEffect(() => {
     if (!aiMenuPos) return
     const handler = (e: PointerEvent) => {
@@ -1503,22 +1759,62 @@ function PlatformHome({
           </div>
 
           {/* Composer body — inner white card, rounded-24 aligns with
-               outer's bottom corners. Subtle border + soft backdrop. */}
-          <div className="flex w-full flex-col rounded-[24px] border border-[#e6eaed] bg-white backdrop-blur-[12px]">
-            {/* Placeholder / textarea region — fixed 79px tall per figma */}
+               outer's bottom corners. Subtle border + soft backdrop.
+               Ref'd so the @mention picker can anchor to the whole card
+               (textarea + toolbar) and drop below without covering it. */}
+          <div
+            ref={composerCardRef}
+            className="flex w-full flex-col rounded-[24px] border border-[#e6eaed] bg-white backdrop-blur-[12px]"
+          >
+            {/* Editor region — contentEditable so picker insertions
+             *  render as inline .mention-pill chips instead of plain
+             *  "@name" text. Fixed 79px tall per figma. */}
             <div className="flex h-[79px] flex-col pb-2 pl-5 pr-3 pt-5">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    onSubmit(draft)
+              <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-multiline
+                data-placeholder={activeTabMeta.placeholder}
+                onInput={() => {
+                  syncDraftFromEditor()
+                  // @ detection — open the picker when the user just
+                  // typed `@` at the caret.
+                  const sel = window.getSelection()
+                  if (!sel || sel.rangeCount === 0) return
+                  const node = sel.focusNode
+                  const offset = sel.focusOffset
+                  if (
+                    node &&
+                    node.nodeType === Node.TEXT_NODE &&
+                    offset > 0 &&
+                    (node.textContent ?? '')[offset - 1] === '@'
+                  ) {
+                    openMentionPickerAtCaret()
+                    return
+                  }
+                  // Close the picker once the `@` token is broken (no
+                  // `@` before the caret, or whitespace inside the token).
+                  if (mentionAnchor) {
+                    const text = editorRef.current?.innerText ?? ''
+                    const lastAt = text.lastIndexOf('@')
+                    if (lastAt < 0 || /\s/.test(text.slice(lastAt))) {
+                      setMentionAnchor(null)
+                    }
                   }
                 }}
-                placeholder={activeTabMeta.placeholder}
-                rows={1}
-                className="block w-full resize-none bg-transparent text-[14px] leading-[22px] text-[var(--color-ink)] outline-none placeholder:text-[rgba(28,31,35,0.35)]"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && mentionAnchor) {
+                    setMentionAnchor(null)
+                    return
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey && !mentionAnchor) {
+                    e.preventDefault()
+                    onSubmit(editorRef.current?.innerText ?? draft)
+                  }
+                }}
+                className="chat-editable thin-scroll block w-full min-h-0 flex-1 overflow-y-auto bg-transparent text-[14px] leading-[22px] text-[var(--color-ink)] outline-none"
               />
             </div>
 
@@ -1528,6 +1824,7 @@ function PlatformHome({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={openMentionPickerAtComposer}
                   className="flex h-9 items-center gap-1 rounded-full px-4 py-1.5 text-[14px] font-semibold leading-5 text-[var(--color-ink)]/80 transition-colors hover:bg-[var(--fill-hover)]"
                 >
                   <FolderPlusIcon size={16} />
@@ -1648,6 +1945,26 @@ function PlatformHome({
           })}
         </div>
       )}
+
+      {/* @mention picker — opens via `@` keystroke or the 资源 toolbar
+       *  button. Four tabs (全部 / Skills / 工具 / 知识库) each drive
+       *  the tree-rail + sticky-section layout via sectionsByTab.
+       *  Empty flat arrays are passed since the prop is required but
+       *  the section path wins. */}
+      <MentionPicker
+        open={!!mentionAnchor}
+        anchor={mentionAnchor}
+        tabs={['all', 'skills', 'tools', 'knowledge']}
+        sectionsByTab={HOME_SECTIONS_BY_TAB}
+        skills={[]}
+        resources={[]}
+        tools={[]}
+        files={[]}
+        triggers={[]}
+        onInsert={insertMention}
+        onClose={() => setMentionAnchor(null)}
+        mode={mentionMode}
+      />
     </div>
   )
 }
@@ -2276,13 +2593,18 @@ export default function VibeCodingPage() {
    * `anchor` positions the popover above the input; clearing it closes
    * the picker. */
   const [mentionAnchor, setMentionAnchor] = useState<
-    { left: number; top: number; width: number } | null
+    { left: number; top: number; bottom: number; width: number } | null
   >(null)
   const openMentionPicker = () => {
     const el = chatInputRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    setMentionAnchor({ left: rect.left, top: rect.top, width: rect.width })
+    setMentionAnchor({
+      left: rect.left,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+    })
   }
   /* User-sent messages — appended to the bottom of the scroll area. The
    * static mock conversation stays above. Three trigger kinds:

@@ -25,11 +25,11 @@ import DouyinMark from './icons/DouyinMark'
  *  carries a coloured tile so the rows pick up the same visual
  *  language as the old 官方 / 空间 aggregator rows. */
 
-type TilePrimaryIcon =
+export type TilePrimaryIcon =
   | { kind: 'bare-douyin' }
   | { kind: 'tile'; icon: LucideIcon; tileClass: string }
 
-const PRIMARY_ICONS: Record<NewPrimaryCategory, TilePrimaryIcon> = {
+export const PRIMARY_ICONS: Record<NewPrimaryCategory, TilePrimaryIcon> = {
   抖音: { kind: 'bare-douyin' },
   灵感创作: {
     kind: 'tile',
