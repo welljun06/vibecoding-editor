@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowDown,
+  BookText,
+  Boxes,
   Check,
   ChevronDown,
   Clock,
@@ -10,6 +12,7 @@ import {
   LayoutTemplate,
   Plus,
   Search,
+  Sparkles,
   Wrench,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -20,11 +23,14 @@ import EmptySearchMark from './icons/EmptySearchMark'
 import {
   CAPABILITY_LABEL,
   CAPABILITY_TAGS,
+  KNOWLEDGE_BUCKETS,
+  KNOWLEDGE_BUCKET_LABEL,
   NEW_PRIMARY_CATEGORIES,
   NEW_SECONDARIES_BY_PRIMARY,
   RESOURCES,
   SCENE_TAGS,
   buildCapabilityTree,
+  classifyKnowledgeBucket,
   inferCapabilityPrimaryForResource,
   inferCapabilitySecondary,
   inferSceneTag,
@@ -39,6 +45,7 @@ const OFFICIAL_DOMAINS: readonly string[] = []
 import type {
   Capability,
   CapabilityTag,
+  KnowledgeBucket,
   NewPrimaryCategory,
   Resource,
   SceneTag,
@@ -147,6 +154,10 @@ interface ResourceLibraryViewProps {
   /** Triggered when user picks the Skills option in the filter-area
    *  「+ 创建」popover. Host opens the SkillCreatePage in response. */
   onCreateSkill?: () => void
+  /** Triggered by 知识库 tab 顶部的「新建知识库」按钮。Host opens
+   *  KnowledgeCreatePage in response. Resource library only — Skills 页面
+   *  没有知识库 tab，所以这个 prop 只在 kind === 'tool' 时被调用。 */
+  onCreateKnowledge?: () => void
 }
 
 const buildTypeTabs = (
@@ -159,10 +170,6 @@ const buildTypeTabs = (
 ]
 
 const COMING_SOON_COPY: Partial<Record<TypeFilter, { title: string; hint: string }>> = {
-  knowledge: {
-    title: '知识库',
-    hint: '统一接入团队 wiki / 文档 / 数据资产作为对话上下文，敬请期待。',
-  },
   model: {
     title: '模型',
     hint: '统一管理可调用的大模型 / 微调模型 / 端侧模型，敬请期待。',
@@ -223,6 +230,7 @@ export default function ResourceLibraryView({
   onUseCapabilityInChat,
   onOpenProject,
   onCreateSkill,
+  onCreateKnowledge,
 }: ResourceLibraryViewProps) {
   const tree = useMemo(() => buildCapabilityTree(kind), [kind])
   const typeTabs = useMemo(() => buildTypeTabs(kind), [kind])
@@ -254,6 +262,10 @@ export default function ResourceLibraryView({
   // 全部 / 官方 / 三方 / 空间. Cards in flat mode group by source; this
   // narrows which source headers are rendered (and which cards survive).
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
+  // 知识库 tab: 左侧 3 项一级分桶的选中态。null = 全部，不在 tab 切走时
+  // 主动清空（用户回到 知识库 tab 仍能看到之前的选择）。
+  const [selectedKnowledgeBucket, setSelectedKnowledgeBucket] =
+    useState<KnowledgeBucket | null>(null)
   // External-mode bucket collapse state. Both buckets start expanded;
   // toggling stays local because there's no cross-tab persistence yet.
   const [collapsedExternal, setCollapsedExternal] = useState<
@@ -452,6 +464,45 @@ export default function ResourceLibraryView({
   // is navigation-only — it scrolls to the matching anchor but still
   // renders the full by-primary view so adjacent sections stay visible.
   const isFiltering = !!searchQuery.trim() || scene !== 'all'
+
+  // 知识库 tab 专用数据：把所有 type === 'knowledge' 的能力按 3 档分桶。
+  // 仅在 typeFilter === 'knowledge' 时使用；其它 typeFilter 下计算结果
+  // 会被忽略，但 hook 必须无条件调用以保持顺序稳定。
+  const knowledgeBuckets = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const map = new Map<
+      KnowledgeBucket,
+      { cap: Capability; platform: Resource }[]
+    >()
+    for (const b of KNOWLEDGE_BUCKETS) map.set(b, [])
+    for (const r of RESOURCES) {
+      for (const c of r.capabilities) {
+        if (c.type !== 'knowledge') continue
+        if (q) {
+          const hay = [c.name, c.category ?? '', r.name].join(' ').toLowerCase()
+          if (!hay.includes(q)) continue
+        }
+        const bucket = classifyKnowledgeBucket(c, r)
+        map.get(bucket)!.push({ cap: c, platform: r })
+      }
+    }
+    return map
+  }, [searchQuery])
+  const knowledgeBucketCounts = useMemo(() => {
+    const m: Record<KnowledgeBucket, number> = {
+      standard: 0,
+      mine: 0,
+      space: 0,
+    }
+    for (const b of KNOWLEDGE_BUCKETS) {
+      m[b] = knowledgeBuckets.get(b)?.length ?? 0
+    }
+    return m
+  }, [knowledgeBuckets])
+  const knowledgeTotal =
+    knowledgeBucketCounts.standard +
+    knowledgeBucketCounts.mine +
+    knowledgeBucketCounts.space
 
   // 外场·Tab mode — observe each bucket section to drive the active-tab
   // underline. The rootMargin shrinks the viewport to "below sticky
@@ -664,18 +715,34 @@ export default function ResourceLibraryView({
         )}
         {/* Scene mode + Layout toggle float absolutely so they don't grow
             the tabs row vertically. Anchored to the row's bottom edge so
-            they line up with the active-tab underline. */}
+            they line up with the active-tab underline. 知识库 tab 没有
+            外场分组语义，隐掉 SceneModeToggle 保持顶栏干净。 */}
         <div className="absolute bottom-1.5 right-6 flex items-center gap-2">
-          <SceneModeToggle value={sceneMode} onChange={setSceneMode} />
+          {typeFilter !== 'knowledge' && (
+            <SceneModeToggle value={sceneMode} onChange={setSceneMode} />
+          )}
           <LayoutToggle value={cardLayout} onChange={setCardLayout} />
         </div>
       </div>
 
       {/* ── Body: tree (left) + scrollable cards (right). Placeholder
            sections (模型 / 发布器) take over the full body and skip both
-           the tree and the filter row. ── */}
+           the tree and the filter row. 知识库 tab 走独立分桶视图。 ── */}
       {COMING_SOON_COPY[typeFilter] ? (
         <ComingSoonView copy={COMING_SOON_COPY[typeFilter]!} />
+      ) : typeFilter === 'knowledge' ? (
+        <KnowledgeBody
+          buckets={knowledgeBuckets}
+          counts={knowledgeBucketCounts}
+          total={knowledgeTotal}
+          selected={selectedKnowledgeBucket}
+          onSelect={setSelectedKnowledgeBucket}
+          cardLayout={cardLayout}
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+          onSelectCapability={onSelectCapability}
+          onCreateKnowledge={onCreateKnowledge}
+        />
       ) : (
       <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* ── Left tree column (independent scroll). All 外场 variants
@@ -1383,6 +1450,260 @@ function EmptyResultState({
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-4 py-1.5 text-[12.5px] font-medium text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
         >
           回到全部资源
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ─── 知识库 tab ───
+ * 复用工具列表的整体布局（左树 + 右侧 sticky 搜索行 + 卡片网格），但
+ * 左树固定 3 项（抖音标准 / 我的抖音 / 空间），右侧按选中的桶筛选并以
+ * 桶标题分组。不引入 sceneMode / 来源 / 我创建的等工具栏概念。
+ */
+
+const KNOWLEDGE_TILE_ICONS: Record<
+  KnowledgeBucket,
+  { icon: typeof BookText; tileClass: string }
+> = {
+  standard: {
+    icon: BookText,
+    tileClass: 'bg-[#eff8ff] text-[#3370ff] dark:bg-sky-500/15 dark:text-sky-300',
+  },
+  mine: {
+    icon: Sparkles,
+    tileClass:
+      'bg-[#fdeee3] text-[#b9510a] dark:bg-amber-500/15 dark:text-amber-300',
+  },
+  space: {
+    icon: Boxes,
+    tileClass:
+      'bg-[#f1eef9] text-[#5720b7] dark:bg-violet-500/15 dark:text-violet-300',
+  },
+}
+
+function KnowledgeBody({
+  buckets,
+  counts,
+  total,
+  selected,
+  onSelect,
+  cardLayout,
+  searchQuery,
+  onSearchChange,
+  onSelectCapability,
+  onCreateKnowledge,
+}: {
+  buckets: Map<KnowledgeBucket, { cap: Capability; platform: Resource }[]>
+  counts: Record<KnowledgeBucket, number>
+  total: number
+  selected: KnowledgeBucket | null
+  onSelect: (b: KnowledgeBucket | null) => void
+  cardLayout: CardLayout
+  searchQuery: string
+  onSearchChange: (q: string) => void
+  onSelectCapability: (ref: CapabilityRef | null) => void
+  onCreateKnowledge?: () => void
+}) {
+  const gridCols =
+    cardLayout === 'compact'
+      ? 'grid-cols-[repeat(auto-fill,minmax(200px,1fr))]'
+      : 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]'
+  const visibleBuckets: KnowledgeBucket[] = selected
+    ? [selected]
+    : [...KNOWLEDGE_BUCKETS]
+  const hasAnyCard =
+    visibleBuckets.reduce((sum, b) => sum + counts[b], 0) > 0
+  return (
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* ── Left tree — 3 buckets，与工具树同等宽度，保持视觉一致。 ── */}
+      <div className="flex w-[220px] shrink-0 flex-col border-r border-[var(--divider-soft)]">
+        <KnowledgeCategoryTree
+          counts={counts}
+          total={total}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      </div>
+
+      {/* ── Right column: 搜索行 + 分桶卡片网格 ── */}
+      <div className="thin-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="sticky top-0 z-10 shrink-0 bg-white">
+          <div className="flex flex-col gap-2 px-6 pb-1.5 pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex h-9 w-[200px] items-center">
+                  <Search
+                    size={16}
+                    strokeWidth={1.8}
+                    className="pointer-events-none absolute left-4 text-[var(--color-ink)]/40"
+                  />
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    placeholder="搜索知识库"
+                    className="h-full w-full rounded-full border border-[var(--divider-soft)] bg-white pl-10 pr-3 text-[14px] leading-5 text-[var(--color-ink)] outline-none transition-colors placeholder:text-[var(--color-ink)]/60 focus:border-[var(--color-ink)]/40"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onCreateKnowledge}
+                className="inline-flex h-9 items-center gap-2 rounded-full bg-[var(--color-ink)] px-4 text-[14px] font-semibold leading-5 text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
+              >
+                <Plus size={16} strokeWidth={1.8} />
+                新建知识库
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {hasAnyCard ? (
+          <div className="flex flex-col gap-8 px-6 pb-10 pt-5">
+            {visibleBuckets.map((bucket) => {
+              const items = buckets.get(bucket) ?? []
+              if (items.length === 0) return null
+              return (
+                <section key={bucket} className="flex flex-col gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 text-[14px] font-semibold text-[var(--color-ink)]">
+                      {KNOWLEDGE_BUCKET_LABEL[bucket]}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+                      {items.length}
+                    </span>
+                  </div>
+                  <div className={`grid ${gridCols} gap-3`}>
+                    {items.map(({ cap, platform }, idx) => (
+                      <RichCapabilityCard
+                        key={`${bucket}-${platform.id}-${cap.name}-${idx}`}
+                        capability={cap}
+                        platform={platform}
+                        onClick={() =>
+                          onSelectCapability({
+                            platformId: platform.id,
+                            name: cap.name,
+                            category: cap.category ?? null,
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
+          </div>
+        ) : (
+          <KnowledgeEmptyState
+            hasSearch={!!searchQuery.trim()}
+            onReset={() => {
+              onSearchChange('')
+              onSelect(null)
+            }}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function KnowledgeCategoryTree({
+  counts,
+  total,
+  selected,
+  onSelect,
+}: {
+  counts: Record<KnowledgeBucket, number>
+  total: number
+  selected: KnowledgeBucket | null
+  onSelect: (b: KnowledgeBucket | null) => void
+}) {
+  return (
+    <div className="thin-scroll flex h-full flex-col overflow-y-auto bg-white">
+      {/* 全部知识库 — 顶部聚合入口，对应 selected = null。 */}
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        className={`sticky top-0 z-[5] flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-left transition-colors ${
+          selected === null
+            ? 'bg-[var(--fill-subtle)]'
+            : 'bg-white hover:bg-[#f3f3f3]'
+        }`}
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#eff8ff] text-[#3370ff] dark:bg-sky-500/15 dark:text-sky-300">
+          <BookText size={12} strokeWidth={1.8} />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px] text-[var(--color-ink)]/85">
+          全部知识库
+        </span>
+        <span className="inline-flex shrink-0 items-center rounded-full border border-white bg-[var(--fill-subtle)] px-1.5 py-px text-[12px] leading-4 text-[var(--color-ink)]/55 dark:border-[var(--color-surface-0)]">
+          {total}
+        </span>
+      </button>
+
+      <div className="flex flex-col gap-1 pt-1">
+        {KNOWLEDGE_BUCKETS.map((bucket) => {
+          const { icon: Icon, tileClass } = KNOWLEDGE_TILE_ICONS[bucket]
+          const isActive = selected === bucket
+          const count = counts[bucket]
+          return (
+            <div key={bucket} className="shrink-0 pl-4 pr-2">
+              <button
+                type="button"
+                onClick={() => onSelect(bucket)}
+                className={`flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[13px] transition-colors ${
+                  isActive
+                    ? 'bg-[var(--fill-subtle)]'
+                    : 'hover:bg-[var(--fill-hover)]'
+                }`}
+              >
+                <span
+                  className={`flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3.5px] ${tileClass}`}
+                >
+                  <Icon size={8} strokeWidth={1.8} />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px] text-[var(--color-ink)]/85">
+                  {KNOWLEDGE_BUCKET_LABEL[bucket]}
+                </span>
+                <span className="shrink-0 text-[12px] leading-4 text-[var(--color-ink)]/35">
+                  {count === 0 ? '待接入' : count}
+                </span>
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function KnowledgeEmptyState({
+  hasSearch,
+  onReset,
+}: {
+  hasSearch: boolean
+  onReset: () => void
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center px-8 py-12">
+      <div className="flex max-w-[440px] flex-col items-center gap-5 text-center">
+        <EmptySearchMark size={80} />
+        <div className="flex flex-col gap-1.5">
+          <h3 className="text-[15px] font-semibold text-[var(--color-ink)]">
+            {hasSearch ? '没有命中的知识库' : '这个分组下还没有知识库'}
+          </h3>
+          <p className="text-[12.5px] leading-[1.7] text-[var(--color-ink)]/55">
+            {hasSearch
+              ? '换个关键词，或清空搜索回到全部知识库。'
+              : '可以先回到全部知识库浏览其他分组。'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onReset}
+          className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-ink)] px-4 py-1.5 text-[12.5px] font-medium text-[var(--color-ink-contrast)] transition-opacity hover:opacity-90"
+        >
+          回到全部知识库
         </button>
       </div>
     </div>

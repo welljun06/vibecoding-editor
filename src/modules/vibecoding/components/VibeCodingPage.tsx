@@ -24,6 +24,7 @@ import ResourceLibraryView, {
 } from './ResourceLibraryView'
 import PlatformPlaceholderView from './PlatformPlaceholderView'
 import SkillCreatePage from '@/modules/editor/components/platform/SkillCreatePage'
+import KnowledgeCreatePage from '@/modules/editor/components/platform/KnowledgeCreatePage'
 import ProposalGoalCard, { type ProposalGoalDraft } from './ProposalGoalCard'
 import ProposalDiagnosisCard from './ProposalDiagnosisCard'
 import ProposalAudienceDashboard from './ProposalAudienceDashboard'
@@ -3276,6 +3277,10 @@ export default function VibeCodingPage() {
    *  (3-column workspace). Auto-reset when the user leaves Skills (see
    *  the effect below). */
   const [skillCreateOpen, setSkillCreateOpen] = useState(false)
+  /** When true, the 资源库 → 知识库 tab swaps its list for the
+   *  KnowledgeCreatePage (3-column 工坊). Reset whenever the user leaves
+   *  the resource library entirely. */
+  const [knowledgeCreateOpen, setKnowledgeCreateOpen] = useState(false)
   // Resets are folded into the open* handlers below so they fire in the
   // same render as setPlatform*Open(true). Doing them in a useEffect
   // post-mount caused the cards pane to paint once with stale state
@@ -3314,6 +3319,11 @@ export default function VibeCodingPage() {
   useEffect(() => {
     if (!platformSkillsOpen) setSkillCreateOpen(false)
   }, [platformSkillsOpen])
+  /** Same pattern for the 资源库 → 知识库 工坊 page — leaving 资源库 wipes
+   *  knowledgeCreateOpen so re-entry lands on the list. */
+  useEffect(() => {
+    if (!platformResourceLibraryOpen) setKnowledgeCreateOpen(false)
+  }, [platformResourceLibraryOpen])
   const openResourceLibraryPage = () => {
     setPlatformHomeOpen(false)
     setPlatformSkillsOpen(false)
@@ -7095,36 +7105,43 @@ export default function VibeCodingPage() {
 
         {isPlatform && platformResourceLibraryOpen && (
           <div className="mt-3 mb-3 mr-3 flex min-h-0 flex-1 overflow-hidden rounded-[16px]">
-            <ResourceLibraryView
-              key={resourceLibraryMountKey}
-              kind="tool"
-              selectedPrimary={resourceLibraryPrimary}
-              selectedSecondary={resourceLibrarySecondary}
-              selectedCapability={resourceLibraryCapability}
-              expandedPrimary={resourceLibraryExpanded}
-              searchQuery={resourceLibrarySearch}
-              typeFilter={resourceLibraryTypeFilter}
-              onTogglePrimary={toggleResourceLibraryExpanded}
-              onSelectCategory={(p, s) => {
-                setResourceLibraryPrimary(p)
-                setResourceLibrarySecondary(s)
-                setResourceLibraryCapability(null)
-              }}
-              onSelectCapability={setResourceLibraryCapability}
-              onSearchChange={setResourceLibrarySearch}
-              onTypeFilterChange={setResourceLibraryTypeFilter}
-              onUseCapabilityInChat={useCapabilityInChat}
-              onOpenProject={(name) => {
-                setProjectTitle(name)
-                handleNewSession()
-                setPlatformHomeOpen(false)
-                setPlatformResourceLibraryOpen(false)
-                setResourceLibraryCapability(null)
-                setPlatformSkillsOpen(false)
-                setPlatformCreativeSquareOpen(false)
-                setActivePreviewTab(0)
-              }}
-            />
+            {knowledgeCreateOpen ? (
+              <KnowledgeCreatePage
+                onClose={() => setKnowledgeCreateOpen(false)}
+              />
+            ) : (
+              <ResourceLibraryView
+                key={resourceLibraryMountKey}
+                kind="tool"
+                selectedPrimary={resourceLibraryPrimary}
+                selectedSecondary={resourceLibrarySecondary}
+                selectedCapability={resourceLibraryCapability}
+                expandedPrimary={resourceLibraryExpanded}
+                searchQuery={resourceLibrarySearch}
+                typeFilter={resourceLibraryTypeFilter}
+                onTogglePrimary={toggleResourceLibraryExpanded}
+                onSelectCategory={(p, s) => {
+                  setResourceLibraryPrimary(p)
+                  setResourceLibrarySecondary(s)
+                  setResourceLibraryCapability(null)
+                }}
+                onSelectCapability={setResourceLibraryCapability}
+                onSearchChange={setResourceLibrarySearch}
+                onTypeFilterChange={setResourceLibraryTypeFilter}
+                onUseCapabilityInChat={useCapabilityInChat}
+                onOpenProject={(name) => {
+                  setProjectTitle(name)
+                  handleNewSession()
+                  setPlatformHomeOpen(false)
+                  setPlatformResourceLibraryOpen(false)
+                  setResourceLibraryCapability(null)
+                  setPlatformSkillsOpen(false)
+                  setPlatformCreativeSquareOpen(false)
+                  setActivePreviewTab(0)
+                }}
+                onCreateKnowledge={() => setKnowledgeCreateOpen(true)}
+              />
+            )}
           </div>
         )}
 

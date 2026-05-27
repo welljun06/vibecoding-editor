@@ -1143,6 +1143,50 @@ export const RESOURCES: Resource[] = [
     ],
   },
 
+  /* ─── 我的抖音知识库 — 用户基于自己的抖音账号沉淀的私有知识资产。
+   *     用于知识库列表页第二组「我的抖音知识库」的填充数据。
+   *     primaryCategory 选 '空间' 仅为类型合法，分桶通过资源 id 判定，
+   *     不会污染 工具 / Skills 的树（这些条目都是 knowledge 类型）。 ─── */
+  {
+    id: 'my-douyin-knowledge',
+    name: '我的抖音知识库',
+    description: '基于本账号历史内容、互动、选题沉淀的私有知识库',
+    primaryCategory: '空间',
+    secondaryCategory: '我的抖音',
+    capabilities: [
+      { type: 'knowledge', name: '我的爆款脚本库' },
+      { type: 'knowledge', name: '我的选题灵感本' },
+      { type: 'knowledge', name: '我的粉丝问答 FAQ' },
+      { type: 'knowledge', name: '我的开播话术' },
+      { type: 'knowledge', name: '我的视频文案归档' },
+      { type: 'knowledge', name: '我的评论回复模板' },
+      { type: 'knowledge', name: '我的合作品牌档案' },
+      { type: 'knowledge', name: '我的人设记忆库' },
+    ],
+  },
+
+  /* ─── 抖音标准知识库 — 平台官方维护的标准化知识库，覆盖品牌、运营、
+   *     合规、商业化等横切主题，作为「抖音标准知识库」第一组的补充。
+   *     primaryCategory: '业务平台' 复用既有取值（树没有为知识库画一个独立
+   *     primary，统一通过 classifyKnowledgeBucket 分桶）。 ─── */
+  {
+    id: 'douyin-standard-knowledge',
+    name: '抖音标准知识库',
+    description: '抖音平台官方维护的标准化知识资产（品牌、运营、合规、商业化）',
+    primaryCategory: '业务平台',
+    secondaryCategory: '抖音标准知识库',
+    capabilities: [
+      { type: 'knowledge', name: '抖音品牌指南' },
+      { type: 'knowledge', name: '抖音运营规范手册' },
+      { type: 'knowledge', name: '抖音商业化政策汇编' },
+      { type: 'knowledge', name: '抖音内容合规红线' },
+      { type: 'knowledge', name: '抖音激励政策档案' },
+      { type: 'knowledge', name: '抖音 IP 授权指引' },
+      { type: 'knowledge', name: '抖音电商行业词表' },
+      { type: 'knowledge', name: '抖音搜索热词词典' },
+    ],
+  },
+
   /* ─── Coverage seeds — synthetic platforms whose capability NAMES are
    *     crafted so every new (primary → secondary) bucket has at least
    *     one skill and one tool. primaryCategory falls back to a generic
@@ -1516,6 +1560,35 @@ export const CAPABILITY_LABEL: Record<CapabilityType, string> = {
   skill: 'Skill',
   tool: 'MCP',
   knowledge: '知识库',
+}
+
+/* ─── Knowledge-only bucketing ───
+ * 资源库 → 知识库 列表页左侧只有三档：抖音标准知识库 / 我的抖音知识库
+ * / 空间知识库。与 工具 / Skills 的 8 类树正交，单独建一套分桶以避免
+ * 与 inferCapabilityPrimaryForResource 的语义冲突。
+ */
+
+export const KNOWLEDGE_BUCKETS = ['standard', 'mine', 'space'] as const
+export type KnowledgeBucket = (typeof KNOWLEDGE_BUCKETS)[number]
+
+export const KNOWLEDGE_BUCKET_LABEL: Record<KnowledgeBucket, string> = {
+  standard: '抖音标准知识库',
+  mine: '我的抖音知识库',
+  space: '空间知识库',
+}
+
+/** Decide which knowledge bucket a (capability, resource) pair belongs
+ *  to. Order matters: the dedicated mock resources for 我的 / 标准 are
+ *  matched by id first so they win over the generic primaryCategory
+ *  fallback. */
+export function classifyKnowledgeBucket(
+  _cap: Capability,
+  resource: Resource,
+): KnowledgeBucket {
+  if (resource.id === 'my-douyin-knowledge') return 'mine'
+  if (resource.id === 'douyin-standard-knowledge') return 'standard'
+  if (resource.primaryCategory === '空间') return 'space'
+  return 'standard'
 }
 
 /* ─── Project usage / lineage ───
